@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: 07-mcp-server
+
+server:
+  port: 8077
+
+mcp:
+  server:
+    name: ai-study-server
+    version: 0.0.1

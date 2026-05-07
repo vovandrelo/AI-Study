@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: 08-rag
+
+server:
+  port: 8088
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen2.5:7b
+  temperature: 0.7
+
+rag:
+  documents-dir: ./docs
+  pgvector:
+    host: localhost
+    port: 5432
+    database: rag
+    user: rag
+    password: rag
+    table: embeddings
+    dimension: 384

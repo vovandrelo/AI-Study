@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: 10-langgraph-basics
+
+server:
+  port: 8090
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen2.5:7b
+  temperature: 0.7

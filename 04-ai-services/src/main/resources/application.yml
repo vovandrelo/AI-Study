@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: 04-ai-services
+
+server:
+  port: 8084
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen2.5:7b
+  temperature: 0.7

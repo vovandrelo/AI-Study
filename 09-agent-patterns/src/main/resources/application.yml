@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: 09-agent-patterns
+
+server:
+  port: 8089
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen2.5:7b
+  temperature: 0.7

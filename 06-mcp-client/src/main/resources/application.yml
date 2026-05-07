@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: 06-mcp-client
+
+server:
+  port: 8086
+
+ollama:
+  base-url: http://localhost:11434
+  model: qwen2.5:7b
+  temperature: 0.7
+
+mcp:
+  servers:
+    filesystem:
+      command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    fetch:
+      command: ["npx", "-y", "@modelcontextprotocol/server-fetch"]
