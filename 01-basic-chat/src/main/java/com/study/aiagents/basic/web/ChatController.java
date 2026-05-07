@@ -7,6 +7,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.output.TokenUsage;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -24,19 +25,31 @@ import java.util.List;
  * <b>Зачем три эндпоинта.</b><br>
  * На этом этапе мы хотим почувствовать три фундаментальных способа взаимодействия с моделью:
  * <ol>
- *     <li>{@code POST /api/chat}             — простейший случай: один user-вопрос → один ответ.</li>
- *     <li>{@code POST /api/chat/with-system} — то же самое, но с системным промптом, задающим
- *         «характер» модели (роль, стиль, ограничения).</li>
+ *     <li>{@code POST /api/chat}             — простейший случай: один user-вопрос → один ответ.
+ *         Системный промпт <i>не используется</i> — видим «сырое» поведение модели по умолчанию.</li>
+ *     <li>{@code POST /api/chat/with-system} — то же самое, но с системным промптом, который
+ *         задаёт «характер» модели. Промпт берётся <i>из конфигурации сервера</i>
+ *         ({@code chat.system-prompt}), а не из тела запроса (см. ниже про безопасность).</li>
  *     <li>{@code POST /api/chat/stream}      — стриминг ответа по мере генерации, через SSE.
- *         На длинных ответах ощутимо улучшает UX (пользователь видит первые слова сразу).</li>
+ *         Использует тот же системный промпт, что и эндпоинт #2.</li>
  * </ol>
+ * <p>
+ * <b>Все три эндпоинта принимают одно и то же тело {@code {"message": "..."}}.</b>
+ * Разница между ними — серверная логика, не контракт API. Это делает три эндпоинта
+ * хорошим «лабораторным стендом»: меняем серверный конфиг, а не клиента, и сравниваем ответы.
+ * <p>
+ * <b>Почему системный промпт не приходит из запроса.</b><br>
+ * Системный промпт — это часть продукта, а не пользовательский ввод. Если разрешить
+ * клиенту присылать свой system, любой пользователь сможет переопределить роль/ограничения
+ * ассистента (классический prompt injection через API). Поэтому промпт хранится в
+ * {@code application.yml} и инжектится через {@code @Value}.
  * <p>
  * Все три варианта используют один и тот же набор сообщений {@code List<ChatMessage>}:
  * это базовая абстракция LangChain4j. {@link SystemMessage} и {@link UserMessage} —
  * наследники {@link ChatMessage}; в дальнейшем добавятся {@code AiMessage} (история ответов)
  * и {@code ToolExecutionResultMessage} (результаты инструментов, Этап 5).
  *
- * @see com.study.aiagents.basic.config.LlmConfig источник бинов
+ * @see com.study.aiagents.basic.config.LlmConfig источник бинов модели
  */
 @RestController
 @RequestMapping("/api/chat")
@@ -46,21 +59,37 @@ public class ChatController {
     private final StreamingChatModel streamingChatModel;
 
     /**
+     * Системный промпт, заданный в {@code application.yml} (свойство {@code chat.system-prompt}).
+     * Используется эндпоинтами {@code /with-system} и {@code /stream}; {@code /api/chat}
+     * намеренно его не подключает.
+     */
+    private final String systemPrompt;
+
+    /**
      * Конструкторная инъекция (предпочтительная в Spring): зависимости видны явно,
      * поля могут быть {@code final}, легко тестировать без Spring-контекста.
+     * <p>
+     * {@code @Value} на параметре конструктора — стандартный способ дотащить значение
+     * из {@code application.yml} в бин, не плодя промежуточный {@code @ConfigurationProperties}.
      */
-    public ChatController(ChatModel chatModel, StreamingChatModel streamingChatModel) {
+    public ChatController(
+            ChatModel chatModel,
+            StreamingChatModel streamingChatModel,
+            @Value("${chat.system-prompt}") String systemPrompt
+    ) {
         this.chatModel = chatModel;
         this.streamingChatModel = streamingChatModel;
+        this.systemPrompt = systemPrompt;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 1. Простейший чат: только user-сообщение
+    // 1. Простейший чат: только user-сообщение, без системного промпта
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Простой запрос: один пользовательский вопрос → один ответ.
-     * Системный промпт не задаём — модель использует своё дефолтное поведение.
+     * Системный промпт <i>не используется</i> — этот эндпоинт нужен, чтобы увидеть
+     * «сырое» поведение модели, без серверного «характера».
      * <p>
      * Пример:
      * <pre>{@code
@@ -70,11 +99,11 @@ public class ChatController {
      * }</pre>
      */
     @PostMapping
-    public ChatResponse simpleChat(@RequestBody SimpleChatRequest request) {
+    public ChatResponse simpleChat(@RequestBody ChatRequest request) {
         validateNotBlank(request == null ? null : request.message(), "message");
 
-        // Здесь можно было бы вызвать удобный шорткат chatModel.chat(String) → String,
-        // но мы используем List<ChatMessage> единым стилем для всех трёх эндпоинтов —
+        // Здесь можно было бы использовать удобный шорткат chatModel.chat(String) → String,
+        // но мы держим единый стиль List<ChatMessage> во всех трёх эндпоинтах —
         // потом легче дорастать до памяти диалога (Этап 2) и инструментов (Этап 5).
         var messages = List.<ChatMessage>of(UserMessage.from(request.message()));
 
@@ -83,28 +112,29 @@ public class ChatController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. Чат с системным промптом
+    // 2. Чат с серверным системным промптом
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Запрос с системным промптом. Системный промпт идёт <b>первым</b> в списке сообщений —
-     * это конвенция всех современных LLM. Если {@code system} пустой, отправляем только user.
+     * Запрос с системным промптом из конфигурации.
+     * <p>
+     * Системный промпт идёт <b>первым</b> в списке сообщений — это конвенция всех
+     * современных LLM. Текст промпта сервер берёт сам — клиент не может его переопределить.
      * <p>
      * Пример:
      * <pre>{@code
      * curl -X POST http://localhost:8081/api/chat/with-system \
      *   -H 'Content-Type: application/json' \
-     *   -d '{
-     *     "system":"Ты строгий технический рецензент. Отвечай по делу.",
-     *     "user":"В одном абзаце: чем ИИ-агент отличается от обычного чат-бота на LLM?"
-     *   }'
+     *   -d '{"message":"В одном абзаце: чем ИИ-агент отличается от обычного чат-бота?"}'
      * }</pre>
+     * Сравни ответ этого эндпоинта с {@code /api/chat} на том же вопросе — увидишь,
+     * как изменился стиль и тон.
      */
     @PostMapping("/with-system")
     public ChatResponse chatWithSystem(@RequestBody ChatRequest request) {
-        validateNotBlank(request == null ? null : request.user(), "user");
+        validateNotBlank(request == null ? null : request.message(), "message");
 
-        var messages = buildMessages(request);
+        var messages = buildMessagesWithSystem(request.message());
         var response = chatModel.chat(messages);
         return toChatResponse(response);
     }
@@ -114,9 +144,9 @@ public class ChatController {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Стриминговый запрос. Ответ модели приходит частями через колбэк
-     * {@link StreamingChatResponseHandler}, и мы транслируем каждую часть клиенту
-     * как отдельное событие SSE.
+     * Стриминговый запрос (использует тот же серверный системный промпт, что и {@link #chatWithSystem}).
+     * Ответ модели приходит частями через колбэк {@link StreamingChatResponseHandler},
+     * и мы транслируем каждую часть клиенту как отдельное событие SSE.
      * <p>
      * <b>SseEmitter в Spring MVC.</b> {@link SseEmitter} с таймаутом {@code 0L} означает
      * «без таймаута» — поток будет жить, пока модель не закончит. В реальном проекте
@@ -131,18 +161,18 @@ public class ChatController {
      * <pre>{@code
      * curl -N -X POST http://localhost:8081/api/chat/stream \
      *   -H 'Content-Type: application/json' \
-     *   -d '{"system":"Отвечай кратко.","user":"Перечисли 5 компонентов ИИ-агента."}'
+     *   -d '{"message":"Перечисли 5 ключевых компонентов ИИ-агента."}'
      * }</pre>
      */
     @PostMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(@RequestBody ChatRequest request) {
-        validateNotBlank(request == null ? null : request.user(), "user");
+        validateNotBlank(request == null ? null : request.message(), "message");
 
         // 0L = бесконечный таймаут на стороне Spring. На стороне модели таймаут уже
         // настроен в LlmConfig (Duration.ofMinutes(10)).
         SseEmitter emitter = new SseEmitter(0L);
 
-        var messages = buildMessages(request);
+        var messages = buildMessagesWithSystem(request.message());
 
         // Стриминговая модель не возвращает результат — она зовёт колбэки на каждом
         // куске ответа. Внутри колбэков мы пересылаем данные в SseEmitter.
@@ -189,15 +219,18 @@ public class ChatController {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Собирает список сообщений из {@link ChatRequest}. Системное сообщение добавляется
-     * только если непустое. Порядок важен: system всегда впереди user.
+     * Собирает список сообщений: системный промпт сервера (если задан) + пользовательский ввод.
+     * Используется обоими эндпоинтами с системным промптом ({@code /with-system}, {@code /stream}).
+     * <p>
+     * Системное сообщение добавляется только если {@code systemPrompt} непустой —
+     * тогда конфигурацию можно «выключить», очистив свойство в {@code application.yml}.
      */
-    private List<ChatMessage> buildMessages(ChatRequest request) {
+    private List<ChatMessage> buildMessagesWithSystem(String userMessage) {
         List<ChatMessage> messages = new ArrayList<>(2);
-        if (request.system() != null && !request.system().isBlank()) {
-            messages.add(SystemMessage.from(request.system()));
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            messages.add(SystemMessage.from(systemPrompt));
         }
-        messages.add(UserMessage.from(request.user()));
+        messages.add(UserMessage.from(userMessage));
         return messages;
     }
 

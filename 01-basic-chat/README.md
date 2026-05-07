@@ -5,9 +5,10 @@
 - Поднять Spring Boot веб-сервис, отдающий REST для общения с LLM
 - Понять три фундаментальных способа запроса: simple, system+user, streaming
 - Прочитать метаданные ответа: `tokenUsage`, `finishReason`
-- Закрепить две главные конвенции проекта:
+- Закрепить три главные конвенции проекта:
   1. **REST**, не CommandLineRunner
   2. **Ручная `@Configuration`**, без auto-config; `@SpringBootApplication`-класс не трогаем
+  3. **Системный промпт — серверная настройка**, не пользовательский ввод
 
 ## Структура модуля
 
@@ -18,8 +19,7 @@ basic/
 │   └── LlmConfig.java          — @Configuration, ручные @Bean методы
 └── web/
     ├── ChatController.java     — три REST-эндпоинта
-    ├── SimpleChatRequest.java  — DTO для /api/chat
-    ├── ChatRequest.java        — DTO для /api/chat/with-system и /api/chat/stream
+    ├── ChatRequest.java        — единый DTO {message} для всех трёх эндпоинтов
     └── ChatResponse.java       — DTO синхронных ответов
 ```
 
@@ -28,11 +28,18 @@ basic/
 
 ## Эндпоинты
 
-Сервис поднимается на `http://localhost:8081`. Все запросы — `POST`, тело — JSON.
+Сервис поднимается на `http://localhost:8081`. Все три эндпоинта принимают одно и то же тело:
 
-### 1. `POST /api/chat` — простой чат
+```json
+{ "message": "..." }
+```
 
-Один пользовательский вопрос → один ответ. Без системного промпта.
+Разница — в **серверной логике**, не в API-контракте: системный промпт подмешивается
+сервером (читается из `application.yml`), а не приходит от клиента.
+
+### 1. `POST /api/chat` — без системного промпта
+
+Один пользовательский вопрос → один ответ. Видим «сырое» поведение модели.
 
 ```bash
 curl -s -X POST http://localhost:8081/api/chat \
@@ -50,30 +57,25 @@ curl -s -X POST http://localhost:8081/api/chat \
 }
 ```
 
-### 2. `POST /api/chat/with-system` — чат с системным промптом
+### 2. `POST /api/chat/with-system` — с серверным системным промптом
 
-Системный промпт задаёт «характер» / роль модели.
+Тот же вопрос, но впереди подмешивается системный промпт из `chat.system-prompt`.
+Сравни ответ с предыдущим — увидишь, как изменился стиль и тон.
 
 ```bash
 curl -s -X POST http://localhost:8081/api/chat/with-system \
   -H 'Content-Type: application/json' \
-  -d '{
-    "system":"Ты строгий технический рецензент. Отвечай по делу.",
-    "user":"В одном абзаце: чем ИИ-агент отличается от обычного чат-бота на LLM?"
-  }' | jq .
+  -d '{"message":"В одном абзаце: чем ИИ-агент отличается от обычного чат-бота?"}' | jq .
 ```
 
 ### 3. `POST /api/chat/stream` — стриминг через SSE
 
-Ответ приходит частями по мере генерации.
+То же самое, что #2, но ответ приходит частями по мере генерации.
 
 ```bash
 curl -N -X POST http://localhost:8081/api/chat/stream \
   -H 'Content-Type: application/json' \
-  -d '{
-    "system":"Отвечай кратко.",
-    "user":"Перечисли 5 ключевых компонентов ИИ-агента."
-  }'
+  -d '{"message":"Перечисли 5 ключевых компонентов ИИ-агента."}'
 ```
 
 Поток событий:
@@ -108,10 +110,12 @@ mvn -pl 01-basic-chat spring-boot:run
 | `ollama.base-url` | `http://localhost:11434` | URL Ollama-демона |
 | `ollama.model` | `qwen2.5:7b` | имя модели |
 | `ollama.temperature` | `0.7` | креативность 0.0–2.0 |
+| `chat.system-prompt` | (есть осмысленный дефолт) | системный промпт для эндпоинтов 2 и 3 |
 
 ## Что попробовать самому
 
-1. Поменять `ollama.temperature` (0.0 vs 1.5) — увидеть разницу в ответах.
-2. В `LlmConfig` добавить `.numPredict(50)` к билдеру — поймать `finishReason: "LENGTH"`.
-3. Поменять модель на `qwen2.5:3b` (если 7b тяжело) — сравнить качество и скорость.
-4. Подменить `OllamaChatModel` на `AnthropicChatModel` — увидеть, что контроллер не меняется.
+1. **Сравнить эндпоинты #1 и #2** на одном и том же вопросе — увидеть, как системный промпт меняет ответ.
+2. **Поменять `chat.system-prompt`** в `application.yml` (например, «отвечай только в стихах») — перезапустить сервис, попробовать снова.
+3. **Поменять `ollama.temperature`** (0.0 vs 1.5) — увидеть разницу в ответах.
+4. В `LlmConfig` добавить `.numPredict(50)` к билдеру — поймать `finishReason: "LENGTH"`.
+5. Подменить `OllamaChatModel` на `AnthropicChatModel` — увидеть, что контроллер не меняется.
