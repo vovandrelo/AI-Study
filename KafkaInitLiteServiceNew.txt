@@ -1,0 +1,1131 @@
+
+@Slf4j
+public class KafkaInitLiteService implements InitLiteApi {
+
+    public static final String SELECT_PARTITION_MAX_SIZE = "SELECT max(pg_relation_size(relid)) " +
+            "FROM pg_partition_tree(?)";
+    public static final String SELECT_PARTITION_TOTAL_MAX_SIZE = "SELECT max(pg_total_relation_size(relid)) " +
+            "FROM pg_partition_tree(?)";
+    public static final String SELECT_PARTITION_INDEXES_MAX_SIZE = "SELECT max(pg_indexes_size(relid)) " +
+            "FROM pg_partition_tree(?)";
+
+    public static final int DEFAULT_LOADER_POOL_SIZE = 8;
+    public static final int DEFAULT_MAX_TUPLE = 327;
+    public static final int DEFAULT_FETCH_SIZE = 1;
+    public static final SerializerType DEFAULT_SERIALIZER = SerializerType.JSON_GSON_NEXT;
+    public static final String DEFAULT_DATA_TYPE = "ORM_CV";
+    public static final int DEFAULT_OBJECTS_IN_BATCH = 30;
+    public static final int DEFAULT_PROPERTIES_LOAD_SIZE = 300;
+    public static final int DEFAULT_LARGE_COLLECTION_THRESHOLD = 100;
+    public static final int DEFAULT_HEARTBEAT_TIMEOUT_SECONDS = 60;
+    public static final int DEFAULT_TUPLE_STEP = 10;
+    public static final String GET_BLOCK_SIZE_QUERY = "SELECT current_setting('block_size')::int";
+    public static final String FETCHGRAPH = "jakarta.persistence.fetchgraph";
+
+    // Имена параметров для динамической конфигурации через params в liteInitLoad.
+    public static final String FETCH_SIZE_PARAMETER = "fetchSize";
+    public static final String OBJECTS_IN_BATCH_PARAMETER = "objectsInBatch";
+    public static final String SERIALIZER_TYPE_PARAMETER = "serializerType";
+
+    private final TsaMonitoringService monitoringService;
+    private final String sourceMnemonic;
+    private final HeartbeatProcessor heartbeatProcessor;
+    private final EntityManagerFactory entityManagerFactory;
+    private final Supplier<EntityManager> entityManagerSupplier;
+    private final MetadataApiFacade metadataApiFacade;
+    private final ExecutorService snapshotHolder = createExecutor(1, "init-snapshot-holder-%d");
+    private final ExecutorService asyncThreadPool;
+    private final HibernateContext hc;
+    private final Map<String, Integer> blockSizeCache = new WeakHashMap<>();
+    private final Map<String, Boolean> isNewPgCache = new WeakHashMap<>();
+    private final java.util.function.Predicate<String> allowedType;
+    private final BiPredicate<String, String> allowedAttribute;
+    private JournalInfoSender journalInfoSender;
+    private final InitLoadSplitter initLoadSplitter;
+    private int fetchSize;
+    private final Integer maxTuple;
+    private final int tupleStep;
+    private final Map<String, EntityConfig> entityConfigs;
+    private volatile boolean initInProgress = false;
+    private volatile BlackList blackList;
+    private WhiteList whiteList;
+
+    private Integer objectsInBatch;
+    private final Integer propertiesLoadSize;
+
+    private SafeFetcher fetcher;
+    private BatchFetcher batchFetcher;
+
+    // Значения по умолчанию, вычисленные в конструкторе. Используются, когда
+    // соответствующий параметр не передан в params метода liteInitLoad.
+    private final int defaultFetchSize;
+    private final Integer defaultObjectsInBatch;
+    private final SerializerType defaultSerializerType;
+    // Тип сериализатора, с которым в данный момент создан journalInfoSender.
+    private SerializerType currentSerializerType;
+
+    // Зависимости, необходимые для пересоздания journalInfoSender при
+    // динамическом изменении serializerType / objectsInBatch.
+    private final JournalTopicProducer journalTopicProducer;
+    private final int largeCollectionThreshold;
+    private final String dataType;
+
+    private final Cache<Map.Entry<String, String>, Integer> maxTupleCache = CacheBuilder.newBuilder()
+            .expireAfterAccess(36, TimeUnit.HOURS)
+            .build();
+
+    @Builder
+    protected KafkaInitLiteService(TsaMonitoringService monitoringService,
+                                   String sourceMnemonic,
+                                   HeartbeatProcessor heartbeatProcessor,
+                                   JournalTopicProducer journalTopicProducer,
+                                   EntityManagerFactory entityManagerFactory,
+                                   Supplier<EntityManager> entityManagerSupplier,
+                                   MetadataApiFacade metadataApiFacade,
+                                   boolean autoFallbackDisabled,
+                                   SerializerType serializerType,
+                                   String dataType,
+                                   Integer loaderPoolSize,
+                                   @Nullable Integer maxTuple,
+                                   Integer tupleStep,
+                                   Integer fetchSize,
+                                   Integer objectsInBatch,
+                                   Integer propertiesLoadSize,
+                                   Integer largeCollectionThreshold,
+                                   Map<String, EntityConfig> entityConfigs,
+                                   Supplier<Map<String, String>> aggregateRootToTableNameSupplier) {
+        this.entityConfigs = entityConfigs != null ? entityConfigs : Collections.emptyMap();
+        this.monitoringService = monitoringService;
+        this.sourceMnemonic = sourceMnemonic;
+        this.heartbeatProcessor = heartbeatProcessor;
+        this.entityManagerFactory = entityManagerFactory;
+        this.entityManagerSupplier = entityManagerSupplier;
+        this.metadataApiFacade = metadataApiFacade;
+        this.allowedType = this::isAllowedType;
+        this.allowedAttribute = this::isAllowedAttribute;
+        this.hc = new HibernateContext(entityManagerFactory, aggregateRootToTableNameSupplier != null
+                ? aggregateRootToTableNameSupplier.get() : Collections.emptyMap(), allowedAttribute);
+        this.initLoadSplitter = new InitLoadSplitter(entityManagerFactory, hc, allowedAttribute, autoFallbackDisabled);
+        this.objectsInBatch = objectsInBatch != null ? objectsInBatch : DEFAULT_OBJECTS_IN_BATCH;
+        this.propertiesLoadSize = propertiesLoadSize != null ? propertiesLoadSize : DEFAULT_PROPERTIES_LOAD_SIZE;
+        this.defaultObjectsInBatch = this.objectsInBatch;
+        this.defaultSerializerType = serializerType != null ? serializerType : DEFAULT_SERIALIZER;
+        this.currentSerializerType = this.defaultSerializerType;
+        this.journalTopicProducer = journalTopicProducer;
+        this.largeCollectionThreshold = largeCollectionThreshold != null
+                ? largeCollectionThreshold : DEFAULT_LARGE_COLLECTION_THRESHOLD;
+        this.dataType = dataType != null ? dataType : DEFAULT_DATA_TYPE;
+        this.journalInfoSender = createJournalInfoSender(this.objectsInBatch, this.defaultSerializerType);
+        this.maxTuple = maxTuple;
+        this.tupleStep = tupleStep != null ? tupleStep : DEFAULT_TUPLE_STEP;
+        this.asyncThreadPool = createExecutor(loaderPoolSize != null ? loaderPoolSize : DEFAULT_LOADER_POOL_SIZE,
+                "data-result-sender-%d");
+        this.fetchSize = fetchSize != null ? fetchSize : DEFAULT_FETCH_SIZE;
+        this.defaultFetchSize = this.fetchSize;
+        this.batchFetcher = new BatchFetcher();
+        this.fetcher = new SafeFetcher(batchFetcher);
+        log.info("KafkaInitLiteService started");
+    }
+
+    private JournalInfoSender createJournalInfoSender(int objectsInBatch, SerializerType serializerType) {
+        return new JournalInfoSender(journalTopicProducer,
+                objectsInBatch,
+                largeCollectionThreshold,
+                this.entityConfigs,
+                this.entityManagerFactory,
+                hc,
+                this.allowedAttribute,
+                serializerType,
+                dataType);
+    }
+
+    @Override
+    public InitLoadResult liteInitLoad(Set<String> types, Map<String, String> params) {
+        log.info("Init load start types={}, context={}", types, params);
+        checkState(!initInProgress, "Another Init session in progress");
+
+        applyDynamicParameters(params);
+
+        if (types.isEmpty()) {
+            types = getAllowedTypes();
+            log.info("Init load types is empty. Do full init. types = {}", types);
+        }
+
+        Map<Boolean, Set<String>> allowedAndForbiddenTypes = types.stream()
+                .filter(t -> hc.isEntityType(t.substring(t.indexOf(':') + 1)))
+                .collect(Collectors.groupingBy(t -> allowedType.test(t.substring(t.indexOf(':') + 1)), Collectors.toSet()));
+
+        Set<String> allowedTypes = allowedAndForbiddenTypes.getOrDefault(true, Collections.emptySet());
+        if (allowedTypes.isEmpty()) {
+            log.warn("There are no allowed types for init");
+        }
+        Set<String> forbiddenTypes = allowedAndForbiddenTypes.getOrDefault(false, Collections.emptySet());
+
+        if (!forbiddenTypes.isEmpty()) {
+            log.warn("There are filtered by white/black list types: {}", forbiddenTypes);
+        }
+
+        TsaCounter tsaCounter = monitoringService.counter(NoOpMonitoringService.INIT_TYPES_COUNT,
+                TsaTagsBuilder.of(sourceMnemonic).build());
+        allowedTypes.forEach(type -> {
+            tsaCounter.inc();
+            TsaCounter tsaSessionCounter = monitoringService.counter(NoOpMonitoringService.INIT_SESSION_COUNT,
+                    TsaTagsBuilder.of(sourceMnemonic).type(type).build());
+            tsaSessionCounter.inc();
+        });
+
+        Set<String> collectionTableRelations = initLoadSplitter.split(allowedTypes);
+        Snapshot snapshot = startSnapshot();
+        HashMap<String, String> newParams = new HashMap<>(params);
+        newParams.put(TX_TIMESTAMP_PARAMETER, Long.toString(snapshot.getTimestamp()));
+        InitLoadResult initLoadResult = new InitLoadResult(snapshot.getSnapshotId(), collectionTableRelations, newParams);
+        log.info("Init load finish types={}, params={}", collectionTableRelations, newParams);
+        return initLoadResult;
+    }
+
+    /**
+     * Применяет динамическую конфигурацию из params для текущей init-сессии.
+     * Для каждого из параметров fetchSize, objectsInBatch и serializerType:
+     * если он присутствует в params — используется его значение, иначе
+     * восстанавливается значение по умолчанию, вычисленное в конструкторе.
+     * journalInfoSender пересоздаётся только если изменились objectsInBatch
+     * или serializerType (оба параметра влияют на него).
+     * Класс существует в единственном экземпляре, и одновременно может идти
+     * только одна выгрузка (гарантируется checkState в liteInitLoad),
+     * поэтому переопределение полей здесь безопасно.
+     */
+    private void applyDynamicParameters(Map<String, String> params) {
+        int newFetchSize = params.containsKey(FETCH_SIZE_PARAMETER)
+                ? Integer.parseInt(params.get(FETCH_SIZE_PARAMETER))
+                : defaultFetchSize;
+
+        int newObjectsInBatch = params.containsKey(OBJECTS_IN_BATCH_PARAMETER)
+                ? Integer.parseInt(params.get(OBJECTS_IN_BATCH_PARAMETER))
+                : defaultObjectsInBatch;
+
+        SerializerType newSerializerType = params.containsKey(SERIALIZER_TYPE_PARAMETER)
+                ? SerializerType.valueOf(params.get(SERIALIZER_TYPE_PARAMETER))
+                : defaultSerializerType;
+
+        this.fetchSize = newFetchSize;
+
+        boolean senderConfigChanged = !this.objectsInBatch.equals(newObjectsInBatch)
+                || newSerializerType != currentSerializerType;
+        this.objectsInBatch = newObjectsInBatch;
+
+        if (senderConfigChanged) {
+            this.currentSerializerType = newSerializerType;
+            this.journalInfoSender = createJournalInfoSender(newObjectsInBatch, newSerializerType);
+        }
+
+        log.info("Applied dynamic parameters: fetchSize={}, objectsInBatch={}, serializerType={}",
+                this.fetchSize, this.objectsInBatch, this.currentSerializerType);
+    }
+
+    @Override
+    public void liteEstimate(String snapshotId, String type, Map<String, String> params) {
+        new Thread(() -> {
+            log.trace("Estimate start id={}, type={}", snapshotId, type);
+            heartbeatProcessor.startEstimate(snapshotId, type);
+            try {
+                final int batchCount;
+                if (initLoadSplitter.isRootType(type) || initLoadSplitter.isRootBadFieldType(type)) {
+                    batchCount = estimateRootType(snapshotId, type, params);
+                } else {
+                    batchCount = 1;
+                }
+
+                heartbeatProcessor.doneEstimate(type, batchCount, params);
+                EstimateResult estimateResult = new EstimateResult(PartitionEstimateCode.PS_ADAPTIVE_READY, batchCount);
+                log.trace("Estimate finish id={}, type={}, result={}", snapshotId, type, estimateResult);
+            } catch (Exception e) {
+                log.error("Error during estimate id={}, type={}", snapshotId, type, e);
+                heartbeatProcessor.errorEstimate(type, e.getMessage());
+
+                try {
+                    TsaCounter typesFailedCounter = monitoringService.counter(NoOpMonitoringService.INIT_TYPES_FAILED,
+                            TsaTagsBuilder.of(sourceMnemonic).build());
+                    typesFailedCounter.inc();
+                } catch (Throwable t) {
+                    log.error("Failed to update metric {}", NoOpMonitoringService.INIT_TYPES_FAILED, t);
+                }
+            }
+        }).start();
+    }
+
+    @Override
+    public void liteLoadBatchAsync(String snapshotId, String type, int partitionIdx, Map<String, String> params) {
+        int batchSizeMb = Integer.parseInt(params.get(BATCH_SIZE_MB_PARAMETER));
+        long txTimestamp = Long.parseLong(params.get(TX_TIMESTAMP_PARAMETER));
+        asyncThreadPool.submit(() -> {
+            log.info("Load batch start id={}, type={}, idx={}", snapshotId, type, partitionIdx);
+            heartbeatProcessor.startProcessing(snapshotId, type, partitionIdx);
+            TsaStopwatch tsaStopwatch = null;
+            TsaLiteDatasource.useNoPgbouncerDatasourceForThread();
+            try (EntityManager entityManager = entityManagerSupplier.get()) {
+                TsaCounter partCounter = monitoringService.counter(NoOpMonitoringService.INIT_PART_COUNT,
+                        TsaTagsBuilder.of(sourceMnemonic).snapshotId(snapshotId).build());
+                partCounter.inc();
+                TsaCounter requestCounter = monitoringService.counter(NoOpMonitoringService.INIT_PARTS_REQUESTED,
+                        TsaTagsBuilder.of(sourceMnemonic).snapshotId(snapshotId).build());
+                requestCounter.inc();
+
+                tsaStopwatch = monitoringService.stopwatch(NoOpMonitoringService.INIT_PART_TIME,
+                        TsaTagsBuilder.of(sourceMnemonic).snapshotId(snapshotId).build());
+                tsaStopwatch.start();
+
+                entityManager.getTransaction().begin();
+                entityManager.getTransaction().setRollbackOnly();
+                attachSnapshot(snapshotId, entityManager);
+                final int objectsSent;
+
+                if (initLoadSplitter.isRootType(type)) {
+                    objectsSent = initTupled(snapshotId, type, partitionIdx, entityManager, batchSizeMb, txTimestamp);
+                } else if (initLoadSplitter.isRootBadFieldType(type)) {
+                    objectsSent = initClassed(snapshotId, type, partitionIdx, entityManager, batchSizeMb, txTimestamp);
+                } else {
+                    objectsSent = initFallback(type, partitionIdx, entityManager, txTimestamp, snapshotId);
+                }
+
+                entityManager.getTransaction().commit();
+                heartbeatProcessor.doneProcessing(type, partitionIdx, objectsSent);
+                log.info("Load batch finish id={}, type={}, idx={}, sent={}", snapshotId, type, partitionIdx, objectsSent);
+
+                TsaCounter sentCounter = monitoringService.counter(NoOpMonitoringService.INIT_PART_SENT,
+                        TsaTagsBuilder.of(sourceMnemonic).type(type).snapshotId(snapshotId).build());
+                sentCounter.inc();
+                TsaCounter counter = monitoringService.counter(NoOpMonitoringService.INIT_OBJECTS_SENT,
+                        TsaTagsBuilder.of(sourceMnemonic).type(type).snapshotId(snapshotId).build());
+                counter.inc(objectsSent);
+            } catch (Throwable e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+
+                log.error("Error during init load id={}, type={}, idx={}", snapshotId, type, partitionIdx, e);
+                heartbeatProcessor.errorProcessing(type, partitionIdx, e.getMessage());
+
+                TsaCounter typesFailedCounter = monitoringService.counter(NoOpMonitoringService.INIT_TYPES_FAILED,
+                        TsaTagsBuilder.of(sourceMnemonic).build());
+                typesFailedCounter.inc();
+            } finally {
+                if (tsaStopwatch != null) {
+                    tsaStopwatch.stop();
+                }
+                TsaLiteDatasource.clear();
+            }
+        });
+    }
+
+    private static void attachSnapshot(String snapshotId, EntityManager entityManager) {
+        verifyQueryParameter(snapshotId);
+        entityManager.unwrap(SessionImplementor.class).doWork(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement("SET TRANSACTION ISOLATION LEVEL repeatable read")) {
+                statement.execute();
+            }
+            try (PreparedStatement statement = connection.prepareStatement("set transaction snapshot '" + snapshotId + "'")) {
+                statement.execute();
+            }
+        });
+    }
+
+    @Override
+    public void liteAbort(String snapshotId) {
+        log.info("Abort snapshot {}", snapshotId);
+        setInitInProgress(false);
+        heartbeatProcessor.abort();
+        maxTupleCache.invalidateAll();
+    }
+
+    private synchronized void setInitInProgress(boolean inProgress) {
+        initInProgress = inProgress;
+    }
+
+    private int initTupled(String snapshotId, String type, int partitionIdx, EntityManager entityManager, int batchSizeMb, long txTimestamp) {
+        int count = 0;
+
+        Class<?> entityClass = initLoadSplitter.getBaseEntityClass(type);
+
+        org.hibernate.query.Query<Tuple> query;
+        if (isNewPg(snapshotId, entityManager)) {
+            query = getQueryNewPG(entityClass, entityManager, snapshotId, type, partitionIdx, batchSizeMb, Tuple.class);
+        } else {
+            query = getQueryOldPG(entityClass, entityManager, snapshotId, type, partitionIdx, batchSizeMb, Tuple.class);
+        }
+        try (ScrollableResults<Tuple> results = query.scroll(ScrollMode.FORWARD_ONLY)) {
+            int actualObjectsInBatch = getObjectsInBatch(entityClass.getCanonicalName());
+            int propertiesLoadSize = getPropertiesLoadSize(entityClass.getCanonicalName());
+            int maxBatchSize = Math.max(actualObjectsInBatch, propertiesLoadSize);
+            Runnable heartbeatCounter = heartbeatCounter(type, partitionIdx);
+            Callback heartbeatCallback = heartbeatCallback(type, partitionIdx, "initTupled");
+
+            List<Tuple> objects = new ArrayList<>();
+
+            while (results.next()) {
+                objects.add(results.get());
+                count++;
+
+                if (results.isLast() || objects.size() >= maxBatchSize) {
+                    Map<String, Map<Serializable, Object>> totalProperties = new HashMap<>();
+                    Collection<List<Tuple>> groupedObjects = objects.stream()
+                            .collect(Collectors.groupingBy(Object::getClass))
+                            .values();
+                    for (List<Tuple> grp : groupedObjects) {
+                        Lists.partition(grp, propertiesLoadSize)
+                                .forEach(subList -> {
+                                    Map<String, Map<Serializable, Object>> objectProperties = readProperties(entityManager, subList);
+                                    totalProperties.putAll(objectProperties);
+                                });
+
+                        Lists.partition(grp, actualObjectsInBatch)
+                                .forEach(subList -> {
+                                    journalInfoSender.sendJournalInfo(subList, entityManager, txTimestamp,
+                                            totalProperties, heartbeatCounter, heartbeatCallback);
+                                    journalInfoSender.flush(txTimestamp, entityManager, heartbeatCounter, heartbeatCallback);
+                                });
+                    }
+
+                    objects.clear();
+                    entityManager.clear();
+                }
+            }
+            entityManager.clear();
+        }
+        return count;
+    }
+
+    private int initClassed(String snapshotId, String type, int partitionIdx, EntityManager entityManager, int batchSizeMb, long txTimestamp) {
+        int count = 0;
+
+        Class<?> entityClass = initLoadSplitter.getBaseEntityClass(type);
+
+        org.hibernate.query.Query<?> query;
+        if (isNewPg(snapshotId, entityManager)) {
+            query = getQueryNewPG(entityClass, entityManager, snapshotId, type, partitionIdx, batchSizeMb, entityClass);
+        } else {
+            query = getQueryOldPG(entityClass, entityManager, snapshotId, type, partitionIdx, batchSizeMb, entityClass);
+        }
+
+        try (ScrollableResults<?> results = query.scroll(ScrollMode.FORWARD_ONLY)) {
+            int actualObjectsInBatch = getObjectsInBatch(entityClass.getCanonicalName());
+            int propertiesLoadSize = getPropertiesLoadSize(entityClass.getCanonicalName());
+            int maxBatchSize = Math.max(actualObjectsInBatch, propertiesLoadSize);
+            Runnable heartbeatCounter = heartbeatCounter(type, partitionIdx);
+            Callback heartbeatCallback = heartbeatCallback(type, partitionIdx, "initClassed");
+
+            List<Object> objects = new ArrayList<>();
+
+            while (results.next()) {
+                objects.add(Hibernate.unproxy(results.get()));
+                count++;
+
+                if (results.isLast() || objects.size() >= maxBatchSize) {
+                    Collection<List<Object>> groupedObjects = objects.stream()
+                            .collect(Collectors.groupingBy(Object::getClass))
+                            .values();
+                    for (List<Object> grp : groupedObjects) {
+                        Lists.partition(grp, propertiesLoadSize)
+                                .forEach(subList -> fetchProperties(subList, snapshotId));
+
+                        Lists.partition(grp, actualObjectsInBatch)
+                                .forEach(subList -> {
+                                    journalInfoSender.sendJournalInfoFallback(subList, entityManager, txTimestamp,
+                                            heartbeatCounter, heartbeatCallback);
+                                    journalInfoSender.flush(txTimestamp, entityManager,
+                                            heartbeatCounter, heartbeatCallback);
+                                });
+                    }
+
+                    objects.clear();
+                    entityManager.clear();
+                }
+            }
+            entityManager.clear();
+        }
+        return count;
+    }
+
+    private boolean isNewPg(String snapshotId, EntityManager entityManager) {
+        return isNewPgCache.computeIfAbsent(snapshotId, any ->
+                entityManager.unwrap(SessionImplementor.class).doReturningWork(conn ->
+                        conn.getMetaData().getDatabaseMajorVersion() >= 14
+                )
+        );
+    }
+
+    private <T> org.hibernate.query.Query<T> getQueryNewPG(
+            Class<?> entityClass,
+            EntityManager entityManager,
+            String snapshotId,
+            String type,
+            int partitionIdx,
+            int batchSizeMb, Class<T> resultClass) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<T> criteria = cb.createQuery(resultClass);
+        Root from = criteria.from(entityClass);
+        ParameterExpression<String> bottomBound = cb.parameter(String.class);
+        ParameterExpression<String> upperBound = cb.parameter(String.class);
+        Expression<String> castedBottomBound = cb.function("::tid", String.class, bottomBound);
+        Expression<String> castedUpperBound = cb.function("::tid", String.class, upperBound);
+
+        Path<?> id = hc.getIdPath(from);
+        Predicate ge = cb.greaterThanOrEqualTo(cb.function("ctid", String.class, id), castedBottomBound);
+        Predicate l = cb.lessThan(cb.function("ctid", String.class, id), castedUpperBound);
+
+        if (resultClass == Tuple.class) {
+            criteria.multiselect(initLoadSplitter.getSelection(type, from));
+        } else {
+            criteria.select(from);
+        }
+
+        if (initLoadSplitter.needSomeTypes(type)) {
+            Predicate discr = from.type().in(initLoadSplitter.getSomeTypes(type));
+            criteria.where(cb.and(ge, l, discr));
+        } else {
+            criteria.where(cb.and(ge, l));
+        }
+
+        org.hibernate.query.Query<T> query = entityManager.createQuery(criteria)
+                .setHint("jakarta.persistence.fetchgraph", entityManager.createEntityGraph(entityClass))
+                .unwrap(org.hibernate.query.Query.class)
+                .setReadOnly(true)
+                .setCacheable(false)
+                .setFetchSize(fetchSize);
+
+        int pagesInBatch = getPagesInBatch(snapshotId, entityManager, batchSizeMb);
+        query.setParameter(bottomBound, "(" + (partitionIdx * pagesInBatch) + ",0)");
+        query.setParameter(upperBound, "(" + (partitionIdx * pagesInBatch + pagesInBatch) + ",0)");
+        return query;
+    }
+
+    private <T> org.hibernate.query.Query<T> getQueryOldPG(
+            Class<?> entityClass,
+            EntityManager entityManager,
+            String snapshotId,
+            String type,
+            int partitionIdx,
+            int batchSizeMb,
+            Class<T> resultClass) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<T> criteria = cb.createQuery(resultClass);
+        Root from = criteria.from(entityClass);
+
+        if (resultClass == Tuple.class) {
+            criteria.multiselect(initLoadSplitter.getSelection(type, from));
+        } else {
+            criteria.select(from);
+        }
+
+        ParameterExpression<Integer> bottomBound = cb.parameter(Integer.class);
+        ParameterExpression<Integer> upperBound = cb.parameter(Integer.class);
+        ParameterExpression<Integer> maxTuple = cb.parameter(Integer.class);
+
+        Predicate bounds = cb.equal(cb.function("ctid", String.class, hc.getIdPath(from)),
+                cb.function("tsa_lite_any_tid_list", String.class, bottomBound, upperBound, maxTuple));
+
+        if (initLoadSplitter.needSomeTypes(type)) {
+            Predicate discr = from.type().in(initLoadSplitter.getSomeTypes(type));
+            criteria.where(cb.and(bounds, discr));
+        } else {
+            criteria.where(bounds);
+        }
+
+        org.hibernate.query.Query<T> query = entityManager.createQuery(criteria)
+                .setHint(FETCHGRAPH, entityManager.createEntityGraph(entityClass))
+                .unwrap(org.hibernate.query.Query.class)
+                .setReadOnly(true)
+                .setCacheable(false)
+                .setFetchSize(fetchSize);
+
+        int pagesInBatch = getPagesInBatch(snapshotId, entityManager, batchSizeMb);
+
+        int startPage = partitionIdx * pagesInBatch;
+        int endPage = partitionIdx * pagesInBatch + pagesInBatch - 1;
+
+        query.setParameter(bottomBound, startPage);
+        query.setParameter(upperBound, endPage);
+        query.setParameter(maxTuple, getMaxTuple(entityManager, snapshotId, type, startPage, endPage));
+        return query;
+    }
+
+    private int getMaxTuple(EntityManager entityManager, String snapshotId, String type, int startPage, int endPage) {
+        String canonicalTypeName = initLoadSplitter.getBaseEntityClass(type).getCanonicalName();
+        EntityConfig typeConfig = entityConfigs.get(canonicalTypeName);
+
+        if (typeConfig != null && typeConfig.maxTuple() != null) {
+            log.info("Max-tuple for type: {} selected as default: {}. (Default value for type).", type, typeConfig.maxTuple());
+            return typeConfig.maxTuple();
+        } else if (this.maxTuple != null) {
+            log.info("Max-tuple for type: {} selected as default: {}. (Default value for all types).", type, this.maxTuple);
+            return this.maxTuple;
+        } else {
+            int dynamicalMaxTupleForType = configureMaxTuple(entityManager, snapshotId, type, startPage, endPage);
+            setMaxTupleToCache(snapshotId, type, dynamicalMaxTupleForType);
+            return dynamicalMaxTupleForType;
+        }
+    }
+
+    private int configureMaxTuple(EntityManager entityManager, String snapshotId, String type, int startPage, int endPage) {
+        Integer actualMaxTuple = maxTupleCache.getIfPresent(Map.entry(snapshotId, type));
+
+        if (actualMaxTuple != null) {
+            return reconfigureMaxTuple(entityManager, type, actualMaxTuple, startPage, endPage);
+        } else {
+            return initialConfigureMaxTuple(entityManager, type, startPage, endPage);
+        }
+    }
+
+    private int initialConfigureMaxTuple(EntityManager entityManager, String type, int startPage, int endPage) {
+        int startMaxTuple = 0;
+        int endMaxTuple = DEFAULT_MAX_TUPLE;
+
+        Number newMaxTuple = getMaxTupleFromDB(entityManager, type, startPage, endPage, startMaxTuple, endMaxTuple);
+
+        if (newMaxTuple == null) {
+            log.warn("Max-tuple could not be calculated for type: {}, the default value will be used: {}. " +
+                            "Params: startPage({}), endPage({}), startMaxTuple({}), endMaxTuple({})",
+                    type, this.maxTuple, startPage, endPage, startMaxTuple, endMaxTuple);
+            return this.maxTuple;
+        } else {
+            log.info("Max-tuple for type: {} has been successfully calculated: {}." +
+                            "Params: startPage({}), endPage({}), startMaxTuple({}), endMaxTuple({})",
+                    type, newMaxTuple.intValue(), startPage, endPage, startMaxTuple, endMaxTuple);
+            return newMaxTuple.intValue();
+        }
+    }
+
+    private int reconfigureMaxTuple(EntityManager entityManager, String type, int maxTuple, int startPage, int endPage) {
+        int actualMaxTuple = maxTuple;
+        while (true) {
+            int startMaxTuple = actualMaxTuple + 1;
+            int endMaxTuple = actualMaxTuple + this.tupleStep;
+
+            Number newMaxTuple = getMaxTupleFromDB(entityManager, type, startPage, endPage, startMaxTuple, endMaxTuple);
+
+            if (newMaxTuple == null) {
+                log.warn("Max-tuple could not be calculated for type: {}, the previously configured max-tuple will be used: {}. " +
+                                "Params: startPage({}), endPage({}), startMaxTuple({}), endMaxTuple({})",
+                        type, actualMaxTuple, startPage, endPage, startMaxTuple, endMaxTuple);
+                return actualMaxTuple;
+            } else if (newMaxTuple.intValue() > actualMaxTuple) {
+                log.info("Max-tuple for type: {} has been successfully calculated, old value: {}, new value: {}. " +
+                                "Params: startPage({}), endPage({}), startMaxTuple({}), endMaxTuple({})",
+                        type, actualMaxTuple, newMaxTuple.intValue(), startPage, endPage, startMaxTuple, endMaxTuple);
+                actualMaxTuple = newMaxTuple.intValue();
+            } else {
+                log.debug("Max-tuple for type: {} has been successfully calculated, but value is not optimal. Old value: {}, " +
+                                "new value: {}. Params: startPage({}), endPage({}), startMaxTuple({}), endMaxTuple({})",
+                        type, actualMaxTuple, newMaxTuple.intValue(), startPage, endPage, startMaxTuple, endMaxTuple);
+
+                return actualMaxTuple;
+            }
+        }
+    }
+
+    @Nullable
+    private Number getMaxTupleFromDB(
+            EntityManager entityManager,
+            String type,
+            int startPage, int endPage,
+            int startTuple, int endTuple
+    ) {
+        Class<?> baseEntityClass = initLoadSplitter.getBaseEntityClass(type);
+        AbstractEntityPersister entityPersister = hc.getEntityPersister(baseEntityClass);
+        if (entityPersister instanceof JoinedSubclassEntityPersister) {
+            AbstractEntityPersister entityPersister0 = hc.getRootPersister(entityPersister.getEntityName());
+            if (entityPersister0 != null) {
+                entityPersister = entityPersister0;
+            }
+        }
+        String[] tableNames = entityPersister.getTableNames();
+        String tableName = tableNames[tableNames.length - 1];
+
+        String maxTupleSql =
+                "SELECT COALESCE(MAX(CAST((CAST(CAST(ctid AS text) AS point))[1] AS integer)), 0) AS max_tuple " +
+                        "FROM " + tableName + " " +
+                        "WHERE ctid = ANY (" +
+                        "  ARRAY(" +
+                        "    SELECT CAST(FORMAT('(%s,%s)', page, tuple) AS tid) " +
+                        "    FROM generate_series(:startPage, :endPage) AS page, " +
+                        "      generate_series(:startTuple, :endTuple) AS tuple" +
+                        "  )" +
+                        ")";
+
+        Query maxTupleQuery = entityManager.createNativeQuery(maxTupleSql);
+        maxTupleQuery.setParameter("startPage", startPage);
+        maxTupleQuery.setParameter("endPage", endPage);
+        maxTupleQuery.setParameter("startTuple", startTuple);
+        maxTupleQuery.setParameter("endTuple", endTuple);
+
+        return (Number) maxTupleQuery.getSingleResult();
+    }
+
+    private synchronized void setMaxTupleToCache(String snapshotId, String type, int newMaxTuple) {
+        Map.Entry<String, String> cacheKey = Map.entry(snapshotId, type);
+        Integer alreadyExistsMaxTuple = this.maxTupleCache.getIfPresent(cacheKey);
+
+        if (alreadyExistsMaxTuple == null || alreadyExistsMaxTuple < newMaxTuple) {
+            this.maxTupleCache.put(cacheKey, newMaxTuple);
+            log.info("Max-tuple cache for type {} has been updated, new value: {}", type, newMaxTuple);
+        }
+    }
+
+    private int initFallback(String type,
+                             int partitionIdx,
+                             EntityManager entityManager,
+                             long txTimestamp,
+                             String snapshotId) {
+        int count = 0;
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+
+        Class<?> entityClass = initLoadSplitter.getBaseEntityClass(type);
+
+        CriteriaQuery<?> criteria = cb.createQuery();
+        Root from = criteria.from(entityClass);
+        criteria.select(from);
+
+        if (initLoadSplitter.isPluralType(type)) {
+            criteria.where(cb.in(from.type()).value(initLoadSplitter.getSomeTypes(type)));
+        }
+
+        org.hibernate.query.Query<?> query = entityManager.createQuery(criteria)
+                .setHint("jakarta.persistence.fetchgraph", entityManager.createEntityGraph(entityClass))
+                .unwrap(org.hibernate.query.Query.class)
+                .setReadOnly(true)
+                .setCacheable(false)
+                .setFetchSize(fetchSize);
+
+        try (ScrollableResults<?> results = query.scroll(ScrollMode.FORWARD_ONLY)) {
+            int actualObjectsInBatch = getObjectsInBatch(entityClass.getCanonicalName());
+            int propertiesLoadSize = getPropertiesLoadSize(entityClass.getCanonicalName());
+            int maxBatchSize = Math.max(actualObjectsInBatch, propertiesLoadSize);
+            Runnable heartbeatCounter = heartbeatCounter(type, partitionIdx);
+            Callback heartbeatCallback = heartbeatCallback(type, partitionIdx, "initFallback");
+
+            List<Object> objects = new ArrayList<>();
+
+            while (results.next()) {
+                objects.add(Hibernate.unproxy(results.get()));
+                count++;
+
+                if (results.isLast() || objects.size() >= maxBatchSize) {
+                    Collection<List<Object>> groupedObjects = objects.stream()
+                            .collect(Collectors.groupingBy(Object::getClass))
+                            .values();
+                    for (List<Object> grp : groupedObjects) {
+                        Lists.partition(grp, propertiesLoadSize)
+                                .forEach(subList -> fetchProperties(subList, snapshotId));
+
+                        Lists.partition(grp, actualObjectsInBatch)
+                                .forEach(subList -> {
+                                    journalInfoSender.sendJournalInfoFallback(subList, entityManager, txTimestamp,
+                                            heartbeatCounter, heartbeatCallback);
+                                    journalInfoSender.flush(txTimestamp, entityManager,
+                                            heartbeatCounter, heartbeatCallback);
+                                });
+                    }
+
+                    objects.clear();
+                    entityManager.clear();
+                }
+
+            }
+            entityManager.clear();
+        }
+
+        return count;
+    }
+
+    private void fetchProperties(List<Object> objects, String snapshotId) {
+        Map<? extends Class<?>, List<Object>> collect = objects.stream().collect(Collectors.groupingBy(Object::getClass));
+        collect.forEach((k, v) -> {
+            AbstractEntityPersister entityPersister = hc.getEntityPersister(k);
+            Type[] propertyTypes = entityPersister.getPropertyTypes();
+            String[] propertyNames = entityPersister.getPropertyNames();
+            for (int i = 0; i < propertyNames.length; i++) {
+                if (!allowedAttribute.test(k.getCanonicalName(), propertyNames[i])) {
+                    continue;
+                }
+                if (!propertyTypes[i].isAssociationType()
+                        || ((AssociationType) propertyTypes[i]).getForeignKeyDirection() == FROM_PARENT) {
+                    continue;
+                }
+                if (propertyTypes[i].isCollectionType()) {
+                    CollectionMetadata metadata = CollectionMetadata.parse(k.getCanonicalName(), propertyNames[i], entityManagerFactory);
+                    if (metadata.getElementType().isComponentType()) {
+                        continue;
+                    }
+                    if (metadata.isIndexedCollection() && metadata.getIndexType().isComponentType()) {
+                        continue;
+                    }
+                    if (metadata.isIndexedCollection() && metadata.isIndexInAnotherTable()) {
+                        continue;
+                    }
+                    fetcher.fetch(objects, propertyNames[i], getAttachedEntityManagerSupplier(snapshotId));
+                }
+            }
+        });
+    }
+
+    private Map<String, Map<Serializable, Object>> readProperties(EntityManager entityManager, Collection<Tuple> tuples) {
+        Map<String, Map<Serializable, Object>> result = new HashMap<>();
+
+        Map<String, List<Serializable>> typeToKeys = new HashMap<>();
+        for (Tuple tuple : tuples) {
+            String type = tuple.get(HibernateContext.TYPE_ALIAS, Class.class).getCanonicalName();
+            typeToKeys.computeIfAbsent(type, key -> new ArrayList<>())
+                    .add(tuple.get(hc.getEntityPersister(type).getIdentifierPropertyName(), Serializable.class));
+        }
+
+        typeToKeys.forEach((t, v) -> {
+            AbstractEntityPersister entityPersister = hc.getEntityPersister(t);
+            Type[] propertyTypes = entityPersister.getPropertyTypes();
+            String[] propertyNames = entityPersister.getPropertyNames();
+            for (int i = 0; i < propertyNames.length; i++) {
+                String propertyAlias = getPropertyAlias(entityPersister.getPropertyAliases("", i), propertyNames[i]);
+                if (!allowedAttribute.test(t, propertyNames[i])) {
+                    continue;
+                }
+                if (!propertyTypes[i].isAssociationType()
+                        || ((AssociationType) propertyTypes[i]).getForeignKeyDirection() == FROM_PARENT) {
+                    continue;
+                }
+                if (propertyTypes[i].isCollectionType()) {
+                    CollectionMetadata metadata = CollectionMetadata.parse(t, propertyNames[i], entityManagerFactory);
+                    if (metadata.getElementType().isComponentType()) {
+                        continue;
+                    }
+                    if (metadata.isIndexedCollection() && metadata.getIndexType().isComponentType()) {
+                        continue;
+                    }
+                    if (metadata.isIndexedCollection() && metadata.isIndexInAnotherTable()) {
+                        continue;
+                    }
+                    Map<Serializable, ?> read = batchFetcher.read(v, t, propertyNames[i], entityManager.unwrap(SessionImplementor.class));
+                    result.computeIfAbsent(propertyAlias, any -> new HashMap<>()).putAll(read);
+                }
+                if (propertyTypes[i].isEntityType()) {
+                    CriteriaBuilder criteriaBuilder = entityManager.getCriteriaBuilder();
+                    CriteriaQuery<Tuple> criteria = criteriaBuilder.createQuery(Tuple.class);
+                    Root<?> from = criteria.from(propertyTypes[i].getReturnedClass());
+
+                    AbstractEntityPersister elementEntityPersister = hc.getEntityPersister(propertyTypes[i].getName());
+                    String identifierPropertyName = elementEntityPersister.getIdentifierPropertyName();
+                    String keyPropertyName = ((AssociationType) propertyTypes[i]).getRHSUniqueKeyPropertyName();
+
+                    Path<Serializable> keyPropertyPath = from.get(keyPropertyName).get(entityPersister.getIdentifierPropertyName());
+                    criteria.multiselect(from.get(identifierPropertyName).alias(identifierPropertyName), keyPropertyPath.alias(keyPropertyName));
+                    criteria.where(keyPropertyPath.in(v));
+
+                    for (Tuple res : entityManager.createQuery(criteria).setHint(FETCHGRAPH, entityManager.createEntityGraph(hc.getEntityClass(propertyTypes[i].getName()))).getResultList()) {
+                        result.computeIfAbsent(propertyAlias, any -> new HashMap<>()).put(res.get(keyPropertyName, Serializable.class),
+                                res.get(identifierPropertyName));
+                    }
+
+                    //заполняем не найденные ключи, чтобы в сендере было понятно, что это именно пустота а не аномалия
+                    Map<Serializable, Object> propertyResult = result.computeIfAbsent(propertyAlias, any -> new HashMap<>());
+                    for (Serializable serializable : v) {
+                        propertyResult.putIfAbsent(serializable, null);
+                    }
+                }
+            }
+        });
+
+        return result;
+    }
+
+    private Snapshot startSnapshot() {
+        AtomicReference<Snapshot> resultHolder = new AtomicReference<>();
+        AtomicReference<Exception> errorHolder = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        snapshotHolder.submit(() -> {
+            TsaLiteDatasource.useNoPgbouncerDatasourceForThread();
+            Snapshot snapshot;
+            try (EntityManager entityManager = entityManagerSupplier.get()) {
+                entityManager.unwrap(SessionImplementor.class)
+                        .doWork(conn -> {
+                            try (PreparedStatement statement = conn.prepareStatement("SET TRANSACTION ISOLATION LEVEL repeatable read")) {
+                                statement.execute();
+                            }
+                        });
+                setInitInProgress(true);
+                entityManager.getTransaction().begin();
+                entityManager.getTransaction().setRollbackOnly();
+                NativeQuery<Tuple> nativeQuery = entityManager.unwrap(SessionImplementor.class).createNativeQuery(
+                        "select pg_export_snapshot() as snapshot, cast(EXTRACT(EPOCH FROM NOW()) as numeric) as timestamp;", Tuple.class);
+                nativeQuery.addScalar("snapshot", String.class);
+                nativeQuery.addScalar("timestamp", BigDecimal.class);
+                Tuple queryRes = nativeQuery.getSingleResult();
+                snapshot = new Snapshot(queryRes.get("snapshot", String.class), queryRes.get("timestamp", BigDecimal.class));
+                resultHolder.set(snapshot);
+                latch.countDown();
+                //пингуем БД, чтобы не закрыла соединение
+                do {
+                    entityManager.createNativeQuery("select 1", Integer.class).getResultList();
+                    Thread.sleep(10_000L);
+
+                } while (initInProgress);
+                log.info("Close snapshot {}", snapshot.getSnapshotId());
+            } catch (Exception e) {
+                log.error("Error starting snapshot", e);
+                errorHolder.set(e);
+                latch.countDown();
+            } finally {
+                setInitInProgress(false);
+                TsaLiteDatasource.clear();
+            }
+        });
+
+        try {
+            latch.await();
+            Snapshot result = resultHolder.get();
+            if (result != null) {
+                return result;
+            } else {
+                throw new RuntimeException("Error waiting for snapshot", errorHolder.get());
+            }
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Start snapshot interrupted", e);
+            throw new RuntimeException("Start snapshot interrupted", e);
+        }
+    }
+
+    private int estimateRootType(String snapshotId, String type, Map<String, String> params) {
+        final int batchCount;
+        TsaLiteDatasource.useNoPgbouncerDatasourceForThread();
+        try (EntityManager entityManager = entityManagerSupplier.get()) {
+            entityManager.getTransaction().begin();
+            entityManager.getTransaction().setRollbackOnly();
+            attachSnapshot(snapshotId, entityManager);
+            AbstractEntityPersister entityPersister = hc.getEntityPersister(initLoadSplitter.getBaseEntityClass(type));
+            Query query = entityManager.createNativeQuery("SELECT pg_relation_size(:tablename), pg_total_relation_size(:tablename), pg_indexes_size(:tablename)", Tuple.class);
+            String[] tableNames = entityPersister.getTableNames();
+            String tablename = tableNames[tableNames.length - 1];
+
+            query.setParameter("tablename", tablename);
+            List<Tuple> resultList = query.getResultList();
+
+            checkState(resultList.size() == 1,
+                    "Unexpected tablesize result size: " + resultList.size());
+
+            final long tableSizeBytes;
+            final long tableTotalSizeBytes;
+            final long tableIndexesSizeBytes;
+
+            if (resultList.get(0).get(0, Long.class) == 0) {
+                tableSizeBytes = getMaxPartitionSize(entityManager, tablename);
+                tableTotalSizeBytes = getMaxPartitionTotalSize(entityManager, tablename);
+                tableIndexesSizeBytes = getMaxPartitionIndexSize(entityManager, tablename);
+            } else {
+                tableSizeBytes = resultList.get(0).get(0, Long.class);
+                tableTotalSizeBytes = resultList.get(0).get(1, Long.class);
+                tableIndexesSizeBytes = resultList.get(0).get(2, Long.class);
+            }
+
+            if (tableSizeBytes == 0) {
+                return 0;
+            }
+
+            if ((tableTotalSizeBytes - tableIndexesSizeBytes) / tableSizeBytes > 10) {
+                params.put(BATCH_SIZE_MB_PARAMETER, "2");
+            }
+
+            int batchSizeMB = Integer.parseInt(params.get(BATCH_SIZE_MB_PARAMETER));
+            int blockSize = getBlockSize(snapshotId, entityManager);
+
+            long pagesCount = tableSizeBytes / blockSize;
+
+            int pagesInBatch = getPagesInBatch(blockSize, batchSizeMB);
+
+            batchCount = (int) Math.ceil(((double) pagesCount) / pagesInBatch);
+        } finally {
+            TsaLiteDatasource.clear();
+        }
+        return batchCount;
+    }
+
+    private static Long getMaxPartitionSize(EntityManager entityManager, String tablename) {
+        return entityManager.unwrap(SessionImplementor.class).doReturningWork(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(SELECT_PARTITION_MAX_SIZE)) {
+                statement.setString(1, tablename.toLowerCase());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (!resultSet.next()) {
+                        return 0L;
+                    }
+
+                    long returningMaxPartitionSize = resultSet.getLong(1);
+                    checkState(!resultSet.next(),
+                            "Unexpected max partition result size more than 1");
+                    return returningMaxPartitionSize;
+                }
+            }
+        });
+    }
+
+    private static Long getMaxPartitionTotalSize(EntityManager entityManager, String tablename) {
+        return entityManager.unwrap(SessionImplementor.class).doReturningWork(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(SELECT_PARTITION_TOTAL_MAX_SIZE)) {
+                statement.setString(1, tablename.toLowerCase());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (!resultSet.next()) {
+                        return 0L;
+                    }
+
+                    long returningMaxPartitionSize = resultSet.getLong(1);
+                    checkState(!resultSet.next(),
+                            "Unexpected max partition total result size more than 1");
+                    return returningMaxPartitionSize;
+                }
+            }
+        });
+    }
+
+    private static Long getMaxPartitionIndexSize(EntityManager entityManager, String tablename) {
+        return entityManager.unwrap(SessionImplementor.class).doReturningWork(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(SELECT_PARTITION_INDEXES_MAX_SIZE)) {
+                statement.setString(1, tablename.toLowerCase());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (!resultSet.next()) {
+                        return 0L;
+                    }
+
+                    long returningMaxPartitionSize = resultSet.getLong(1);
+                    checkState(!resultSet.next(),
+                            "Unexpected max partition indexes result size more than 1");
+                    return returningMaxPartitionSize;
+                }
+            }
+        });
+    }
+
+    private int getPagesInBatch(String snapshotId, EntityManager entityManager, int batchSizeMB) {
+        return getPagesInBatch(getBlockSize(snapshotId, entityManager), batchSizeMB);
+    }
+
+    private int getPagesInBatch(int blockSize, int batchSizeMb) {
+        return batchSizeMb * 1024 * 1024 / blockSize;
+    }
+
+    private int getBlockSize(String snapshotId, EntityManager entityManager) {
+        Integer blockSize = blockSizeCache.get(snapshotId);
+        if (blockSize != null) {
+            return blockSize;
+        }
+        synchronized (blockSizeCache) {
+            return blockSizeCache.computeIfAbsent(snapshotId, k -> entityManager.unwrap(SessionImplementor.class)
+                    .doReturningWork(connection -> {
+                        try (PreparedStatement statement = connection.prepareStatement(GET_BLOCK_SIZE_QUERY);
+                             ResultSet resultSet = statement.executeQuery();) {
+                            checkState(resultSet.next(), "Unexpected block size result size: 0");
+                            int returnedBlockSize = resultSet.getInt(1);
+                            checkState(!resultSet.next(), "Unexpected block size result size more than 1");
+                            return returnedBlockSize;
+                        }
+                    }));
+        }
+    }
+
+    private Set<String> getAllowedTypes() {
+        ensureFilterListsInitialized();
+        return whiteList.getEntries().keySet();
+    }
+
+    private boolean isAllowedType(String typeName) {
+        ensureFilterListsInitialized();
+        return whiteList.isAllowed(typeName) && !blackList.isForbidden(typeName);
+    }
+
+    private boolean isAllowedAttribute(String typeName, String propertyName) {
+        ensureFilterListsInitialized();
+        return whiteList.isAllowed(typeName, propertyName) && !blackList.isForbidden(typeName, propertyName);
+    }
+
+    private void ensureFilterListsInitialized() {
+        if (blackList == null || whiteList == null) {
+            synchronized (this) {
+                if (blackList == null || whiteList == null) {
+                    whiteList = metadataApiFacade.loadWhiteList().toWhiteList();
+                    if (whiteList.getMode() == WhiteList.WhiteListMode.DISABLED) {
+                        whiteList = new WhiteList(WhiteList.WhiteListMode.ENABLED,
+                                generateLdmMap(metadataApiFacade.loadModelImpl()));
+                    }
+                    blackList = metadataApiFacade.loadBlackList().toBlackList();
+                }
+            }
+        }
+    }
+
+    private Map<String, List<String>> generateLdmMap(LdmDto ldmDto) {
+        DataModel dataModel = LdmScanner.readDataModel(ldmDto.getText());
+        Map<String, ModelClass> collect = dataModel.getMetaModel().getClazz().stream().collect(Collectors.toMap(ModelClass::getName, Function.identity()));
+
+        Map<String, List<String>> result = new HashMap<>();
+        for (ModelClass value : collect.values()) {
+
+            HashSet<String> properties = new HashSet<>();
+
+            ModelClass modelClass = value;
+            while (modelClass != null) {
+                modelClass.getProperty().stream().map(ModelProperty::getName).forEach(properties::add);
+                modelClass = collect.get(modelClass.getExtends());
+            }
+
+            result.put(value.getName(), new ArrayList<>(properties));
+        }
+        return result;
+    }
+
+    public static ExecutorService createExecutor(int numberOfThreads, String nameFormat) {
+        ThreadFactory threadFactory = new ThreadFactoryBuilder()
+                .setDaemon(true)
+                .setNameFormat(nameFormat)
+                .setUncaughtExceptionHandler((t, throwable) -> log.error("Uncaught exception was thrown. ", throwable))
+                .build();
+        return Executors.newFixedThreadPool(numberOfThreads, threadFactory);
+    }
+
+    private int getObjectsInBatch(String type) {
+        EntityConfig entityConfig = entityConfigs.get(type);
+        return Optional.ofNullable(entityConfig)
+                .map(EntityConfig::objectsInBatch)
+                .orElse(this.objectsInBatch);
+    }
+
+    private int getPropertiesLoadSize(String type) {
+        EntityConfig entityConfig = entityConfigs.get(type);
+        return Optional.ofNullable(entityConfig)
+                .map(EntityConfig::propertiesLoadSize)
+                .orElse(this.propertiesLoadSize);
+    }
+
+    @Nonnull
+    private Supplier<EntityManager> getAttachedEntityManagerSupplier(String snapshotId) {
+        return () -> {
+            EntityManager entityManager1 = entityManagerSupplier.get();
+            entityManager1.getTransaction().begin();
+            entityManager1.getTransaction().setRollbackOnly();
+            attachSnapshot(snapshotId, entityManager1);
+            return entityManager1;
+        };
+    }
+
+    private Runnable heartbeatCounter(String type, int partitionIdx) {
+        return () -> heartbeatProcessor.processingIncrement(type, partitionIdx);
+    }
+
+    private Callback heartbeatCallback(String type, int partitionIdx, String mark) {
+        return (metadata, exception) -> {
+            log.debug("{} callback, type = {}, partitionIdx = {}, exception: {}",
+                    mark, type, partitionIdx, exception != null ? exception.getMessage() : "null");
+            if (exception == null) {
+                heartbeatProcessor.processingIncrementDone(type, partitionIdx);
+            } else {
+                log.error(exception.getMessage(), exception);
+                heartbeatProcessor.errorProcessing(type, partitionIdx, exception.getMessage());
+            }
+        };
+    }
+}
