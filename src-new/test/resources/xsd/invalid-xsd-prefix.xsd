@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРЕФИКСЫ: пространство имён XML Schema объявлено с префиксом "xsd:", а не "xs:".
+  Проверки должны работать по namespace, а не по тексту префикса.
+  Ожидаемое количество нарушений: 3 (по одному на каждое правило).
+-->
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            xmlns:t="urn:test:prefix"
+            targetNamespace="urn:test:prefix"
+            elementFormDefault="qualified">
+
+    <!-- OK: пользовательский тип с именем "string" в СВОЁМ namespace — это не xs:string -->
+    <xsd:simpleType name="string">
+        <xsd:restriction base="xsd:string">
+            <xsd:maxLength value="20"/>
+        </xsd:restriction>
+    </xsd:simpleType>
+
+    <xsd:element name="root">
+        <xsd:complexType>
+            <xsd:sequence>
+                <!-- НАРУШЕНИЕ (правило 1): type="xsd:string" -->
+                <xsd:element name="r1_xsdString" type="xsd:string"/>
+
+                <!-- НАРУШЕНИЕ (правило 2): type="xsd:decimal" -->
+                <xsd:element name="r2_xsdDecimal" type="xsd:decimal"/>
+
+                <!-- НАРУШЕНИЕ (правило 3): xsd:any -->
+                <xsd:element name="r3_xsdAny">
+                    <xsd:complexType>
+                        <xsd:sequence>
+                            <xsd:any/>
+                        </xsd:sequence>
+                    </xsd:complexType>
+                </xsd:element>
+
+                <!-- OK: t:string — пользовательский ограниченный тип, хоть и называется "string" -->
+                <xsd:element name="ok_userTypeNamedString" type="t:string"/>
+            </xsd:sequence>
+        </xsd:complexType>
+    </xsd:element>
+
+</xsd:schema>

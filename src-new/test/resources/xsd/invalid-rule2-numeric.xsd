@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 2: числовые типы xs:decimal, xs:integer, xs:negativeInteger, xs:nonNegativeInteger,
+  xs:nonPositiveInteger, xs:positiveInteger должны быть ограничены xs:totalDigits
+  ИЛИ парой xs:minInclusive/xs:minExclusive + xs:maxInclusive/xs:maxExclusive.
+
+  Схема проходит этап 1. Нарушения помечены "НАРУШЕНИЕ", имена нарушителей начинаются с "r2_".
+  Объявления с префиксом "ok_" правило соблюдают и в результат попасть не должны.
+  Ожидаемое количество нарушений: 14.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:rule2"
+           targetNamespace="urn:test:rule2"
+           elementFormDefault="qualified">
+
+    <!-- НАРУШЕНИЕ (правило 2): restriction base="xs:decimal" без фасетов -->
+    <xs:simpleType name="r2_DecimalNoFacets">
+        <xs:restriction base="xs:decimal"/>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 2): только xs:fractionDigits — это не totalDigits -->
+    <xs:simpleType name="r2_DecimalFractionDigitsOnly">
+        <xs:restriction base="xs:decimal">
+            <xs:fractionDigits value="2"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 2): только нижняя граница (xs:minInclusive), нет верхней -->
+    <xs:simpleType name="r2_IntegerMinOnly">
+        <xs:restriction base="xs:integer">
+            <xs:minInclusive value="0"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 2): только верхняя граница (xs:maxExclusive), нет нижней -->
+    <xs:simpleType name="r2_IntegerMaxOnly">
+        <xs:restriction base="xs:integer">
+            <xs:maxExclusive value="100"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 2): список неограниченных чисел (xs:list itemType="xs:integer") -->
+    <xs:simpleType name="r2_ListOfInteger">
+        <xs:list itemType="xs:integer"/>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:totalDigits -->
+    <xs:simpleType name="ok_TotalDigits">
+        <xs:restriction base="xs:decimal">
+            <xs:totalDigits value="10"/>
+            <xs:fractionDigits value="2"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:minInclusive + xs:maxInclusive -->
+    <xs:simpleType name="ok_MinMaxInclusive">
+        <xs:restriction base="xs:integer">
+            <xs:minInclusive value="0"/>
+            <xs:maxInclusive value="10"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:minExclusive + xs:maxExclusive -->
+    <xs:simpleType name="ok_MinMaxExclusive">
+        <xs:restriction base="xs:positiveInteger">
+            <xs:minExclusive value="1"/>
+            <xs:maxExclusive value="10"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): смешанная пара xs:minExclusive + xs:maxInclusive -->
+    <xs:simpleType name="ok_MinExclusiveMaxInclusive">
+        <xs:restriction base="xs:nonPositiveInteger">
+            <xs:minExclusive value="-10"/>
+            <xs:maxInclusive value="0"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): наследник ok_TotalDigits — ограничение уже задано у базового типа -->
+    <xs:simpleType name="ok_DerivedFromUserType">
+        <xs:restriction base="t:ok_TotalDigits">
+            <xs:minInclusive value="0"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:element name="root">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- НАРУШЕНИЕ (правило 2): каждый из шести числовых типов указан напрямую в type -->
+                <xs:element name="r2_elementDecimal" type="xs:decimal"/>
+                <xs:element name="r2_elementInteger" type="xs:integer"/>
+                <xs:element name="r2_elementNegativeInteger" type="xs:negativeInteger"/>
+                <xs:element name="r2_elementNonNegativeInteger" type="xs:nonNegativeInteger"/>
+                <xs:element name="r2_elementNonPositiveInteger" type="xs:nonPositiveInteger"/>
+                <xs:element name="r2_elementPositiveInteger" type="xs:positiveInteger"/>
+
+                <!-- НАРУШЕНИЕ (правило 2): вложенный restriction, только верхняя граница -->
+                <xs:element name="r2_elementInlineMaxOnly">
+                    <xs:simpleType>
+                        <xs:restriction base="xs:nonNegativeInteger">
+                            <xs:maxInclusive value="99"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+
+                <!-- НАРУШЕНИЕ (правило 2): текстовое содержимое через extension base="xs:decimal" не ограничено -->
+                <xs:element name="r2_elementExtensionDecimal">
+                    <xs:complexType>
+                        <xs:simpleContent>
+                            <xs:extension base="xs:decimal">
+                                <xs:attribute name="ok_currency" type="t:ok_MinMaxInclusive"/>
+                            </xs:extension>
+                        </xs:simpleContent>
+                    </xs:complexType>
+                </xs:element>
+
+                <xs:element name="ok_totalDigits" type="t:ok_TotalDigits"/>
+                <xs:element name="ok_minMaxInclusive" type="t:ok_MinMaxInclusive"/>
+                <xs:element name="ok_minMaxExclusive" type="t:ok_MinMaxExclusive"/>
+                <xs:element name="ok_mixed" type="t:ok_MinExclusiveMaxInclusive"/>
+                <xs:element name="ok_derived" type="t:ok_DerivedFromUserType"/>
+
+                <!-- OK (правило 2): xs:int и xs:long не входят в список правила (они ограничены по определению) -->
+                <xs:element name="ok_int" type="xs:int"/>
+                <xs:element name="ok_long" type="xs:long"/>
+            </xs:sequence>
+
+            <!-- НАРУШЕНИЕ (правило 2): атрибут с type="xs:integer" -->
+            <xs:attribute name="r2_attributeInteger" type="xs:integer"/>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

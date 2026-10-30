@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПОЛНОСТЬЮ ВАЛИДНАЯ СХЕМА.
+  Проходит и стандартную валидацию (этап 1), и все кастомные правила (этап 2).
+  Здесь собраны все разрешённые варианты по каждому правилу.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:valid"
+           targetNamespace="urn:test:valid"
+           elementFormDefault="qualified">
+
+    <!-- ===================== Правило 1: строки ===================== -->
+
+    <!-- OK (правило 1): xs:string ограничен через xs:maxLength -->
+    <xs:simpleType name="StringMaxLength">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="100"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): xs:string ограничен через xs:length -->
+    <xs:simpleType name="StringLength">
+        <xs:restriction base="xs:string">
+            <xs:length value="10"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): xs:string ограничен через xs:enumeration -->
+    <xs:simpleType name="StringEnumeration">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="NEW"/>
+            <xs:enumeration value="DONE"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): xs:string ограничен через xs:pattern (длина паттерном не ограничена — пока допустимо) -->
+    <xs:simpleType name="StringPattern">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[A-Z]+"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): наследник уже ограниченного пользовательского типа; maxLength задан у базового -->
+    <xs:simpleType name="StringDerivedFromUserType">
+        <xs:restriction base="t:StringMaxLength">
+            <xs:minLength value="1"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- ===================== Правило 2: числа ===================== -->
+
+    <!-- OK (правило 2): xs:decimal ограничен через xs:totalDigits -->
+    <xs:simpleType name="DecimalTotalDigits">
+        <xs:restriction base="xs:decimal">
+            <xs:totalDigits value="18"/>
+            <xs:fractionDigits value="2"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:integer ограничен парой xs:minInclusive + xs:maxInclusive -->
+    <xs:simpleType name="IntegerMinMaxInclusive">
+        <xs:restriction base="xs:integer">
+            <xs:minInclusive value="0"/>
+            <xs:maxInclusive value="999"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:positiveInteger ограничен парой xs:minExclusive + xs:maxExclusive -->
+    <xs:simpleType name="PositiveIntegerMinMaxExclusive">
+        <xs:restriction base="xs:positiveInteger">
+            <xs:minExclusive value="1"/>
+            <xs:maxExclusive value="100"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): смешанная пара xs:minInclusive + xs:maxExclusive -->
+    <xs:simpleType name="NonPositiveIntegerMixed">
+        <xs:restriction base="xs:nonPositiveInteger">
+            <xs:minInclusive value="-100"/>
+            <xs:maxExclusive value="0"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:negativeInteger ограничен через xs:totalDigits -->
+    <xs:simpleType name="NegativeIntegerTotalDigits">
+        <xs:restriction base="xs:negativeInteger">
+            <xs:totalDigits value="5"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 2): xs:nonNegativeInteger ограничен через xs:totalDigits -->
+    <xs:simpleType name="NonNegativeIntegerTotalDigits">
+        <xs:restriction base="xs:nonNegativeInteger">
+            <xs:totalDigits value="5"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- ===================== Правило 3: any ===================== -->
+
+    <!-- OK (правило 3): complexContent/restriction base="xs:anyType" — развёрнутая запись обычного complexType -->
+    <xs:complexType name="ExplicitComplexType">
+        <xs:complexContent>
+            <xs:restriction base="xs:anyType">
+                <xs:sequence>
+                    <xs:element name="value" type="t:StringMaxLength"/>
+                </xs:sequence>
+            </xs:restriction>
+        </xs:complexContent>
+    </xs:complexType>
+
+    <!-- OK (правило 3): голова группы замены с явным типом -->
+    <xs:element name="head" type="t:StringMaxLength"/>
+
+    <!-- OK (правило 3): элемент без type, но с substitutionGroup — тип наследуется от головы -->
+    <xs:element name="substitute" substitutionGroup="t:head"/>
+
+    <!-- ===================== Корневой элемент ===================== -->
+
+    <xs:element name="root">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="maxLength" type="t:StringMaxLength"/>
+                <xs:element name="length" type="t:StringLength"/>
+                <xs:element name="enumeration" type="t:StringEnumeration"/>
+                <xs:element name="pattern" type="t:StringPattern"/>
+                <xs:element name="derived" type="t:StringDerivedFromUserType"/>
+                <xs:element name="amount" type="t:DecimalTotalDigits"/>
+                <xs:element name="count" type="t:IntegerMinMaxInclusive"/>
+                <xs:element name="positive" type="t:PositiveIntegerMinMaxExclusive"/>
+                <xs:element name="nonPositive" type="t:NonPositiveIntegerMixed"/>
+                <xs:element name="negative" type="t:NegativeIntegerTotalDigits"/>
+                <xs:element name="nonNegative" type="t:NonNegativeIntegerTotalDigits"/>
+                <xs:element name="explicit" type="t:ExplicitComplexType"/>
+
+                <!-- OK (правило 1): вложенный simpleType с xs:pattern -->
+                <xs:element name="phone">
+                    <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                            <xs:pattern value="\+?[0-9]{10,15}"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+
+                <!-- OK (правила 1 и 2): встроенные типы, на которые правила не распространяются -->
+                <xs:element name="date" type="xs:date"/>
+                <xs:element name="flag" type="xs:boolean"/>
+                <xs:element name="intValue" type="xs:int"/>
+                <xs:element name="longValue" type="xs:long"/>
+
+                <!-- OK (правило 3): ref — тип определён у глобального элемента -->
+                <xs:element ref="t:head"/>
+            </xs:sequence>
+
+            <!-- OK (правила 1 и 3): атрибут с ограниченным строковым типом -->
+            <xs:attribute name="status" type="t:StringEnumeration"/>
+            <xs:attribute name="id" type="xs:int"/>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

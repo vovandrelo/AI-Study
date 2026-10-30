@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 3: запрещены xs:any, xs:anyType, xs:anySimpleType — как явные, так и неявные
+  (элемент без типа получает xs:anyType, атрибут без типа — xs:anySimpleType).
+
+  Схема проходит этап 1. Нарушения помечены "НАРУШЕНИЕ", имена нарушителей начинаются с "r3_".
+  Объявления с префиксом "ok_" правило соблюдают и в результат попасть не должны.
+  Ожидаемое количество нарушений: 7.
+
+  Примечание: simpleType/restriction base="xs:anySimpleType" здесь не используется — такую схему
+  отклоняет уже компилятор на этапе 1 (см. invalid-semantic.xsd).
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:rule3"
+           targetNamespace="urn:test:rule3"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="ok_Code">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="10"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 3): список из xs:anySimpleType -->
+    <xs:simpleType name="r3_ListOfAnySimpleType">
+        <xs:list itemType="xs:anySimpleType"/>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 3): расширение xs:anyType -->
+    <xs:complexType name="r3_ExtensionOfAnyType">
+        <xs:complexContent>
+            <xs:extension base="xs:anyType">
+                <xs:attribute name="ok_code" type="t:ok_Code"/>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+
+    <!-- OK (правило 3): complexContent/restriction base="xs:anyType" — развёрнутая запись обычного complexType,
+         произвольного содержимого не допускает -->
+    <xs:complexType name="ok_ExplicitComplexType">
+        <xs:complexContent>
+            <xs:restriction base="xs:anyType">
+                <xs:sequence>
+                    <xs:element name="ok_value" type="t:ok_Code"/>
+                </xs:sequence>
+            </xs:restriction>
+        </xs:complexContent>
+    </xs:complexType>
+
+    <!-- OK (правило 3): голова группы замены и элемент из группы без собственного type -->
+    <xs:element name="ok_head" type="t:ok_Code"/>
+    <xs:element name="ok_substitute" substitutionGroup="t:ok_head"/>
+
+    <xs:element name="root">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- НАРУШЕНИЕ (правило 3): xs:any — произвольный элемент -->
+                <xs:element name="r3_elementWithAny">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:any processContents="lax"/>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+
+                <!-- НАРУШЕНИЕ (правило 3): явный type="xs:anyType" -->
+                <xs:element name="r3_elementTypeAnyType" type="xs:anyType"/>
+
+                <!-- НАРУШЕНИЕ (правило 3): элемент без type и без вложенного типа = неявный xs:anyType -->
+                <xs:element name="r3_elementImplicitAnyType"/>
+
+                <!-- OK (правило 3): ссылка ref — тип задан у глобального элемента -->
+                <xs:element ref="t:ok_head"/>
+                <xs:element name="ok_explicit" type="t:ok_ExplicitComplexType"/>
+            </xs:sequence>
+
+            <!-- НАРУШЕНИЕ (правило 3): явный type="xs:anySimpleType" у атрибута -->
+            <xs:attribute name="r3_attributeAnySimpleType" type="xs:anySimpleType"/>
+
+            <!-- НАРУШЕНИЕ (правило 3): атрибут без type = неявный xs:anySimpleType -->
+            <xs:attribute name="r3_attributeImplicitAnySimpleType"/>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

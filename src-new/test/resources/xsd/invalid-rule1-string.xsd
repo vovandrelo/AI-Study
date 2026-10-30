@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 1: строковый тип (xs:string) должен быть ограничен
+  xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  Схема проходит этап 1. Нарушения помечены "НАРУШЕНИЕ", имена нарушителей начинаются с "r1_".
+  Объявления с префиксом "ok_" правило соблюдают и в результат попасть не должны.
+  Ожидаемое количество нарушений: 8.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:rule1"
+           targetNamespace="urn:test:rule1"
+           elementFormDefault="qualified">
+
+    <!-- НАРУШЕНИЕ (правило 1): restriction base="xs:string" без фасетов вообще -->
+    <xs:simpleType name="r1_RestrictionNoFacets">
+        <xs:restriction base="xs:string"/>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 1): есть только xs:minLength — он не ограничивает длину сверху и не входит в список допустимых -->
+    <xs:simpleType name="r1_RestrictionMinLengthOnly">
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 1): список из неограниченных строк (xs:list itemType="xs:string") -->
+    <xs:simpleType name="r1_ListOfString">
+        <xs:list itemType="xs:string"/>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 1): объединение, одна из ветвей — неограниченная строка -->
+    <xs:simpleType name="r1_UnionWithString">
+        <xs:union memberTypes="xs:date xs:string"/>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): ограничен xs:maxLength -->
+    <xs:simpleType name="ok_MaxLength">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): ограничен xs:length -->
+    <xs:simpleType name="ok_Length">
+        <xs:restriction base="xs:string">
+            <xs:length value="3"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): ограничен xs:enumeration -->
+    <xs:simpleType name="ok_Enumeration">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="A"/>
+            <xs:enumeration value="B"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): ограничен xs:pattern -->
+    <xs:simpleType name="ok_Pattern">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9]+"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK (правило 1): наследник ok_MaxLength — ограничение уже задано у базового типа -->
+    <xs:simpleType name="ok_DerivedFromUserType">
+        <xs:restriction base="t:ok_MaxLength">
+            <xs:minLength value="1"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:element name="root">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- НАРУШЕНИЕ (правило 1): type="xs:string" напрямую — ограничение задать невозможно -->
+                <xs:element name="r1_elementTypeString" type="xs:string"/>
+
+                <!-- НАРУШЕНИЕ (правило 1): вложенный restriction base="xs:string" только с xs:whiteSpace -->
+                <xs:element name="r1_elementInlineRestriction">
+                    <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                            <xs:whiteSpace value="collapse"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+
+                <!-- НАРУШЕНИЕ (правило 1): текстовое содержимое через extension base="xs:string" не ограничено -->
+                <xs:element name="r1_elementExtensionString">
+                    <xs:complexType>
+                        <xs:simpleContent>
+                            <xs:extension base="xs:string">
+                                <xs:attribute name="ok_lang" type="t:ok_Length"/>
+                            </xs:extension>
+                        </xs:simpleContent>
+                    </xs:complexType>
+                </xs:element>
+
+                <!-- OK (правило 1): вложенный restriction с xs:enumeration -->
+                <xs:element name="ok_elementInlineEnumeration">
+                    <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                            <xs:enumeration value="X"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+
+                <xs:element name="ok_maxLength" type="t:ok_MaxLength"/>
+                <xs:element name="ok_length" type="t:ok_Length"/>
+                <xs:element name="ok_enumeration" type="t:ok_Enumeration"/>
+                <xs:element name="ok_pattern" type="t:ok_Pattern"/>
+                <xs:element name="ok_derived" type="t:ok_DerivedFromUserType"/>
+            </xs:sequence>
+
+            <!-- НАРУШЕНИЕ (правило 1): атрибут с type="xs:string" -->
+            <xs:attribute name="r1_attributeTypeString" type="xs:string"/>
+
+            <!-- OK (правило 1): атрибут с ограниченным типом -->
+            <xs:attribute name="ok_attribute" type="t:ok_Pattern"/>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>
