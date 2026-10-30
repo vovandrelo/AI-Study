@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРЕФИКСЫ: XML Schema — пространство имён по умолчанию, теги и типы записаны БЕЗ префикса
+  (<schema>, type="string"). Проверки должны работать и в этом случае.
+  Ожидаемое количество нарушений: 2.
+-->
+<schema xmlns="http://www.w3.org/2001/XMLSchema"
+        xmlns:t="urn:test:default"
+        targetNamespace="urn:test:default"
+        elementFormDefault="qualified">
+
+    <simpleType name="Code">
+        <restriction base="string">
+            <length value="2"/>
+        </restriction>
+    </simpleType>
+
+    <element name="root">
+        <complexType>
+            <sequence>
+                <!-- НАРУШЕНИЕ (правило 1): type="string" без префикса — это xs:string -->
+                <element name="r1_defaultNsString" type="string"/>
+
+                <!-- НАРУШЕНИЕ (правило 2): type="integer" без префикса — это xs:integer -->
+                <element name="r2_defaultNsInteger" type="integer"/>
+
+                <!-- OK: ограниченный пользовательский тип -->
+                <element name="ok_code" type="t:Code"/>
+            </sequence>
+        </complexType>
+    </element>
+
+</schema>
