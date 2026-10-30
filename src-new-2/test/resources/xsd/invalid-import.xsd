@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ЭТАП 1: подключаемый файл не найден.
+  common.xsd должен лежать рядом с главным файлом (в этой же папке), но его там нет.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:c="urn:test:common">
+
+    <!-- НАРУШЕНИЕ (этап 1): файла common.xsd нет в папке главного файла -->
+    <xs:import namespace="urn:test:common" schemaLocation="common.xsd"/>
+
+    <xs:element name="money" type="c:Money"/>
+
+</xs:schema>

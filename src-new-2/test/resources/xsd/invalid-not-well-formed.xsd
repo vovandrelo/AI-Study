@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- НАРУШЕНИЕ (этап 1): это вообще не корректный XML — тег xs:element не закрыт -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:element name="unclosed" type="xs:int">
+</xs:schema>

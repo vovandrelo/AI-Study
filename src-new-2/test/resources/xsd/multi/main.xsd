@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  МНОГОФАЙЛОВАЯ СХЕМА: главный файл.
+  Все подключаемые файлы лежат в этой же папке (соглашение). Из schemaLocation берётся только
+  имя файла, поэтому путь с папкой и абсолютный URL тоже указывают на файл рядом с главным.
+
+  Структура:
+    main.xsd
+      ├─ xs:import  common-types.xsd                                 (обычное имя файла)
+      │    └─ xs:import common-money.xsd                             (вложенный импорт)
+      ├─ xs:import  http://example.com/schemas/common-money.xsd      (URL → common-money.xsd, второй раз)
+      └─ xs:include sub/main-parts.xsd                               (путь с папкой → main-parts.xsd)
+
+  В каждом из четырёх файлов ровно одно кастомное нарушение — всего 4.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:m="urn:test:main"
+           xmlns:t="urn:test:types"
+           xmlns:money="urn:test:money"
+           targetNamespace="urn:test:main"
+           elementFormDefault="qualified">
+
+    <xs:import namespace="urn:test:types" schemaLocation="common-types.xsd"/>
+    <xs:import namespace="urn:test:money" schemaLocation="http://example.com/schemas/common-money.xsd"/>
+    <xs:include schemaLocation="sub/main-parts.xsd"/>
+
+    <xs:element name="order">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- OK: типы из импортированных и включённых файлов -->
+                <xs:element name="code" type="t:Code"/>
+                <xs:element name="amount" type="money:Amount"/>
+                <xs:element name="part" type="m:PartName"/>
+
+                <!-- НАРУШЕНИЕ (правило 1) в main.xsd: type="xs:string" без ограничений -->
+                <xs:element name="r1_mainString" type="xs:string"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

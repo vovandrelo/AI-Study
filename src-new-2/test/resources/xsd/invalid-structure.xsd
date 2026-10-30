@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ЭТАП 1: схема не соответствует мета-схеме XMLSchema.xsd.
+  Кастомная валидация (этап 2) не должна запускаться, хотя здесь есть и кастомное нарушение.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+    <!-- НАРУШЕНИЕ (этап 1): у xs:element нет атрибута "foo" -->
+    <xs:element name="unknownAttribute" type="xs:int" foo="bar"/>
+
+    <!-- НАРУШЕНИЕ (этап 1): у глобального xs:element обязателен атрибут name -->
+    <xs:element type="xs:int"/>
+
+    <xs:complexType name="MisspelledTag">
+        <xs:sequence>
+            <!-- НАРУШЕНИЕ (этап 1): тега xs:elemen не существует (опечатка в xs:element) -->
+            <xs:elemen name="misspelled" type="xs:int"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <!-- Нарушение правила 1 (этап 2). Не должно попасть в результат: до этапа 2 дело не дойдёт -->
+    <xs:element name="customViolationNotReported" type="xs:string"/>
+
+</xs:schema>

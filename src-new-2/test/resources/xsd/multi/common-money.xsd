@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  МНОГОФАЙЛОВАЯ СХЕМА: денежные типы.
+  Подключается дважды: из main.xsd (через URL) и из common-types.xsd (вложенный импорт).
+  Нарушение отсюда должно попасть в результат ровно один раз.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:test:money"
+           elementFormDefault="qualified">
+
+    <!-- OK (правило 2): xs:decimal ограничен xs:totalDigits -->
+    <xs:simpleType name="Amount">
+        <xs:restriction base="xs:decimal">
+            <xs:totalDigits value="18"/>
+            <xs:fractionDigits value="2"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 1) в common-money.xsd: restriction base="xs:string" без фасетов -->
+    <xs:simpleType name="r1_CurrencyNoFacets">
+        <xs:restriction base="xs:string"/>
+    </xs:simpleType>
+
+</xs:schema>

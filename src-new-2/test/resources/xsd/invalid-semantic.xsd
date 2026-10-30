@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ЭТАП 1 (семантика): синтаксически схема написана правильно, но не компилируется —
+  ошибки смысла, которые находит только компилятор (SchemaFactory.newSchema).
+  Кастомная валидация (этап 2) не должна запускаться, хотя здесь есть и кастомное нарушение.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+    <!-- НАРУШЕНИЕ (этап 1): ссылка на тип, который нигде не объявлен -->
+    <xs:element name="undefinedType" type="NoSuchType"/>
+
+    <!-- НАРУШЕНИЕ (этап 1): фасет xs:maxLength неприменим к числовому типу xs:decimal -->
+    <xs:simpleType name="MaxLengthOnDecimal">
+        <xs:restriction base="xs:decimal">
+            <xs:maxLength value="5"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (этап 1): от xs:anySimpleType нельзя наследовать через restriction -->
+    <xs:simpleType name="RestrictionOfAnySimpleType">
+        <xs:restriction base="xs:anySimpleType"/>
+    </xs:simpleType>
+
+    <!-- Нарушение правила 1 (этап 2). Не должно попасть в результат: до этапа 2 дело не дойдёт -->
+    <xs:element name="customViolationNotReported" type="xs:string"/>
+
+</xs:schema>

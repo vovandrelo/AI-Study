@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  МНОГОФАЙЛОВАЯ СХЕМА: часть главной схемы, подключается через xs:include (тот же targetNamespace).
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:test:main"
+           elementFormDefault="qualified">
+
+    <!-- OK (правило 1): строка ограничена xs:maxLength -->
+    <xs:simpleType name="PartName">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="40"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- НАРУШЕНИЕ (правило 2) в main-parts.xsd: type="xs:decimal" без ограничений -->
+    <xs:element name="r2_partsDecimal" type="xs:decimal"/>
+
+</xs:schema>

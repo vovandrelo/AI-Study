@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Подключается из main.xsd через xs:include -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:b="urn:test:broken"
+           targetNamespace="urn:test:broken"
+           elementFormDefault="qualified">
+
+    <!-- НАРУШЕНИЕ (этап 1) в broken-part.xsd: тип b:NoSuchType нигде не объявлен -->
+    <xs:element name="undefinedType" type="b:NoSuchType"/>
+
+</xs:schema>

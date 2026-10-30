@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  МНОГОФАЙЛОВАЯ СХЕМА: общие типы, подключается из main.xsd через xs:import.
+  Сама импортирует common-money.xsd — проверка вложенных импортов.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:money="urn:test:money"
+           targetNamespace="urn:test:types"
+           elementFormDefault="qualified">
+
+    <xs:import namespace="urn:test:money" schemaLocation="common-money.xsd"/>
+
+    <!-- OK (правило 1): строка ограничена xs:enumeration -->
+    <xs:simpleType name="Code">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="A"/>
+            <xs:enumeration value="B"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- OK: используется тип из вложенного импорта -->
+    <xs:element name="price" type="money:Amount"/>
+
+    <!-- НАРУШЕНИЕ (правило 3) в common-types.xsd: xs:any -->
+    <xs:element name="r3_typesAny">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:any/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

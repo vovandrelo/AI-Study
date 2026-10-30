@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  МНОГОФАЙЛОВАЯ СХЕМА С ОШИБКОЙ В ПОДКЛЮЧАЕМОМ ФАЙЛЕ.
+  Главный файл корректен, ошибка компиляции — в broken-part.xsd.
+  Ошибка этапа 1 должна указывать на broken-part.xsd; этап 2 не запускается.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:test:broken"
+           elementFormDefault="qualified">
+
+    <xs:include schemaLocation="broken-part.xsd"/>
+
+    <!-- Нарушение правила 1 (этап 2). Не должно попасть в результат: до этапа 2 дело не дойдёт -->
+    <xs:element name="customViolationNotReported" type="xs:string"/>
+
+</xs:schema>
