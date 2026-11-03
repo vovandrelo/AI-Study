@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ОГРАНИЧЕНИЕ СТРОК. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО НАРУШЕНО:
+    Вложенный элемент comment внутри complexType объявлен с type="xs:string".
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Правило действует на любом уровне вложенности, не только для глобальных элементов.
+
+  КАК ИСПРАВИТЬ:
+    type="t:Name" с ограниченным типом.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:element name="comment"> type="xs:string"
+    для строкового типа должно быть задано ограничение
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:element name="order">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- НАРУШЕНИЕ: локальный элемент с неограниченной строкой -->
+                <xs:element name="comment" type="xs:string"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

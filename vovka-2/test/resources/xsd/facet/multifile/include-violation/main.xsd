@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  НЕСКОЛЬКО ФАЙЛОВ. Нарушение во ВКЛЮЧАЕМОМ файле. ОГРАНИЧЕНИЕ ЧИСЕЛ. Типы xs:decimal, xs:integer, xs:positiveInteger, xs:nonNegativeInteger, xs:negativeInteger,
+  xs:nonPositiveInteger должны быть ограничены xs:totalDigits ЛИБО парой
+  xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive.
+
+  ЧТО НАРУШЕНО:
+    Главный файл чистый. Он включает part.xsd (xs:include, то же пространство имён),
+    а в part.xsd тип Amount ограничен только xs:fractionDigits.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Включаемый файл это часть той же схемы, он проверяется так же, как главный.
+
+  КАК ИСПРАВИТЬ:
+    Добавить xs:totalDigits в part.xsd.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    [xsd/facet/multifile/include-violation/part.xsd]
+    <xs:restriction base="xs:decimal"> (в <xs:simpleType name="Amount">)
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:include schemaLocation="part.xsd"/>
+
+    <!-- Главный файл без нарушений -->
+    <xs:element name="total" type="t:Amount"/>
+
+</xs:schema>

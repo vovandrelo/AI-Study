@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ДОПУСТИМЫЙ ВАРИАНТ. ОГРАНИЧЕНИЕ СТРОК. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО ПРОВЕРЯЕМ:
+    Строка ограничена списком допустимых значений.
+
+  ПОЧЕМУ ЭТО НЕ НАРУШЕНИЕ:
+    Допустимы только перечисленные значения.
+
+  ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:
+    Валидация проходит без исключения.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Status">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="NEW"/>
+            <xs:enumeration value="PAID"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element name="status" type="t:Status"/>
+
+</xs:schema>

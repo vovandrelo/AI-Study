@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ЗАПРЕТ ВСЕЯДНЫХ КОНСТРУКЦИЙ. Запрещены xs:any, xs:anyType и xs:anySimpleType, в том числе неявные:
+  элемент без типа получает xs:anyType, атрибут без типа получает xs:anySimpleType.
+
+  ЧТО НАРУШЕНО:
+    В модели содержимого элемента extra стоит xs:any.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    На этом месте может быть любой элемент: схема перестаёт контролировать содержимое.
+
+  КАК ИСПРАВИТЬ:
+    Явно перечислить допустимые элементы.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    использование xs:any запрещено (в <xs:element name="extra">)
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:element name="extra">
+        <xs:complexType>
+            <xs:sequence>
+                <!-- НАРУШЕНИЕ: любой элемент -->
+                <xs:any processContents="lax"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

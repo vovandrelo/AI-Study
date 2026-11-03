@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ЗАПРЕТ ВСЕЯДНЫХ КОНСТРУКЦИЙ. Запрещены xs:any, xs:anyType и xs:anySimpleType, в том числе неявные:
+  элемент без типа получает xs:anyType, атрибут без типа получает xs:anySimpleType.
+
+  ЧТО НАРУШЕНО:
+    xs:any вложен глубоко: в xs:choice внутри именованной группы Payload.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Глубина вложенности не важна: проверяются все теги файла.
+
+  КАК ИСПРАВИТЬ:
+    Убрать xs:any, оставить только объявленные элементы.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    использование xs:any запрещено (в <xs:group name="Payload">)
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- Вспомогательный тип: строка до 50 символов. Сам правила не нарушает. -->
+    <xs:simpleType name="Name">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:group name="Payload">
+        <xs:choice>
+            <xs:element name="text" type="t:Name"/>
+            <!-- НАРУШЕНИЕ: любой элемент как один из вариантов -->
+            <xs:any/>
+        </xs:choice>
+    </xs:group>
+
+</xs:schema>

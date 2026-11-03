@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  НЕСКОЛЬКО ФАЙЛОВ. Порядок проверки файлов.
+
+  ЧТО НАРУШЕНО:
+    Нарушения есть и в главном файле (элемент без типа),
+    и во включаемом part.xsd (неограниченная строка).
+
+  ЧТО ПРОВЕРЯЕМ:
+    Файлы проверяются в порядке загрузки: главный первым. Валидатор останавливается
+    на первом нарушении, поэтому сообщение должно указывать на main.xsd.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    [xsd/facet/multifile/main-first/main.xsd]
+    элемент 'untyped' объявлен без типа
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:include schemaLocation="part.xsd"/>
+
+    <!-- НАРУШЕНИЕ: элемент без типа. Должно быть найдено первым -->
+    <xs:element name="untyped"/>
+
+</xs:schema>

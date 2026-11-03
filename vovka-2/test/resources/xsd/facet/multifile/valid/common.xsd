@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Общие типы магазина. Своё пространство имён: urn:shop:common -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:c="urn:shop:common"
+           targetNamespace="urn:shop:common"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Amount">
+        <xs:restriction base="xs:decimal">
+            <xs:totalDigits value="18"/>
+            <xs:fractionDigits value="2"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="Currency">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="RUB"/>
+            <xs:enumeration value="USD"/>
+            <xs:enumeration value="EUR"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="Money">
+        <xs:simpleContent>
+            <xs:extension base="c:Amount">
+                <xs:attribute name="currency" type="c:Currency" use="required"/>
+            </xs:extension>
+        </xs:simpleContent>
+    </xs:complexType>
+
+</xs:schema>
