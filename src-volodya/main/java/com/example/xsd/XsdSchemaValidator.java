@@ -4,21 +4,13 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import org.xml.sax.Attributes;
-import org.xml.sax.Locator;
 import org.xml.sax.SAXException;
-import org.xml.sax.helpers.DefaultHandler;
 
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.parsers.SAXParser;
-import javax.xml.parsers.SAXParserFactory;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.text.MessageFormat;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -37,7 +29,7 @@ import java.util.Set;
  *   <li>нет xs:any, xs:anyType, xs:anySimpleType (в том числе неявных: элемент без типа
  *       получает xs:anyType, атрибут без типа — xs:anySimpleType).</li>
  * </ol>
- * На первом нарушении бросается {@link XsdValidationException} с файлом и номером строки.
+ * На первом нарушении бросается {@link XsdValidationException} с именем файла.
  *
  * <p>Ограничения задаются только через xs:restriction: прямая ссылка на xs:string или числовой тип
  * (type, xs:extension base, xs:list itemType, xs:union memberTypes) — всегда нарушение.
@@ -49,14 +41,15 @@ public class XsdSchemaValidator {
 
     private static final String XS = XMLConstants.W3C_XML_SCHEMA_NS_URI;
 
-    private static final String LINE_KEY = "line";
-
+    /** Правило 1: строковые типы. */
     private static final Set<String> STRING_TYPES = Set.of("string");
 
+    /** Правило 2: числовые типы. */
     private static final Set<String> NUMERIC_TYPES = Set.of(
             "decimal", "integer", "negativeInteger", "nonNegativeInteger",
             "nonPositiveInteger", "positiveInteger");
 
+    /** Правило 3: запрещённые типы. */
     private static final Set<String> FORBIDDEN_TYPES = Set.of("anyType", "anySimpleType");
 
     private static final Set<String> STRING_FACETS = Set.of("length", "maxLength", "enumeration", "pattern");
@@ -79,7 +72,7 @@ public class XsdSchemaValidator {
     // ------------------------------------------------------------------ обход файла
 
     private void validateFile(String fileName, byte[] content) {
-        Document doc = parseWithLineNumbers(fileName, content);
+        Document doc = parse(fileName, content);
         NodeList all = doc.getElementsByTagNameNS(XS, "*");
         for (int i = 0; i < all.getLength(); i++) {
             Element e = (Element) all.item(i);
@@ -96,8 +89,8 @@ public class XsdSchemaValidator {
                         }
                     }
                 }
-                case "any" -> throw violation(fileName, e, "Правило 3",
-                        "использование xs:any запрещено" + ownerSuffix(e));
+                // Правило 3: xs:any
+                case "any" -> throw violation(fileName, "использование xs:any запрещено" + ownerSuffix(e));
                 default -> { /* остальные теги не проверяются */ }
             }
         }
@@ -105,7 +98,7 @@ public class XsdSchemaValidator {
 
     // ------------------------------------------------------------------ правила
 
-    /** xs:element / xs:attribute: явный type или неявный xs:anyType / xs:anySimpleType. */
+    /** Правило 3: xs:element / xs:attribute без типа — неявный xs:anyType / xs:anySimpleType. */
     private void checkElementOrAttribute(String fileName, Element e) {
         if (e.hasAttribute("ref")) {
             return; // тип задан у глобального объявления, оно проверяется отдельно
@@ -119,11 +112,11 @@ public class XsdSchemaValidator {
         }
         if ("element".equals(e.getLocalName())) {
             if (!e.hasAttribute("substitutionGroup")) { // иначе тип наследуется от головы группы
-                throw violation(fileName, e, "Правило 3", "элемент '" + e.getAttribute("name")
+                throw violation(fileName, "элемент '" + e.getAttribute("name")
                         + "' объявлен без типа и неявно имеет тип xs:anyType");
             }
         } else {
-            throw violation(fileName, e, "Правило 3", "атрибут '" + e.getAttribute("name")
+            throw violation(fileName, "атрибут '" + e.getAttribute("name")
                     + "' объявлен без типа и неявно имеет тип xs:anySimpleType");
         }
     }
@@ -139,16 +132,19 @@ public class XsdSchemaValidator {
         }
         String where = "<xs:" + e.getLocalName() + nameSuffix(e) + "> " + attrName + "=\"" + qName + "\""
                 + (e.hasAttribute("name") ? "" : ownerSuffix(e));
+        // Правило 3
         if (FORBIDDEN_TYPES.contains(builtIn)) {
-            throw violation(fileName, e, "Правило 3", where + ": использование xs:" + builtIn + " запрещено");
+            throw violation(fileName, where + ": использование xs:" + builtIn + " запрещено");
         }
+        // Правило 1
         if (STRING_TYPES.contains(builtIn)) {
-            throw violation(fileName, e, "Правило 1", where + ": для строкового типа должно быть задано "
-                    + "ограничение (xs:length, xs:maxLength, xs:enumeration или xs:pattern) через xs:restriction");
+            throw violation(fileName, where + ": для строкового типа должно быть задано ограничение "
+                    + "(xs:length, xs:maxLength, xs:enumeration или xs:pattern) через xs:restriction");
         }
+        // Правило 2
         if (NUMERIC_TYPES.contains(builtIn)) {
-            throw violation(fileName, e, "Правило 2", where + ": для числового типа должно быть задано "
-                    + "ограничение (xs:totalDigits или xs:min* + xs:max*) через xs:restriction");
+            throw violation(fileName, where + ": для числового типа должно быть задано ограничение "
+                    + "(xs:totalDigits или xs:min* + xs:max*) через xs:restriction");
         }
     }
 
@@ -161,24 +157,27 @@ public class XsdSchemaValidator {
         }
         String where = "<xs:restriction base=\"" + base + "\">" + ownerSuffix(r);
 
+        // Правило 3
         if (FORBIDDEN_TYPES.contains(builtIn)) {
             // <xs:complexContent><xs:restriction base="xs:anyType"> — развёрнутая запись обычного
             // complexType, произвольного содержимого она не допускает
             boolean explicitComplexType = "anyType".equals(builtIn)
                     && r.getParentNode() instanceof Element p && "complexContent".equals(p.getLocalName());
             if (!explicitComplexType) {
-                throw violation(fileName, r, "Правило 3", where + ": использование xs:" + builtIn + " запрещено");
+                throw violation(fileName, where + ": использование xs:" + builtIn + " запрещено");
             }
+            // Правило 1
         } else if (STRING_TYPES.contains(builtIn)) {
             if (!hasAnyFacet(r, STRING_FACETS)) {
-                throw violation(fileName, r, "Правило 1", where + ": не задан ни один из параметров "
+                throw violation(fileName, where + ": не задан ни один из параметров "
                         + "xs:length, xs:maxLength, xs:enumeration, xs:pattern");
             }
+            // Правило 2
         } else if (NUMERIC_TYPES.contains(builtIn)) {
             boolean restricted = hasAnyFacet(r, Set.of("totalDigits"))
                     || (hasAnyFacet(r, MIN_FACETS) && hasAnyFacet(r, MAX_FACETS));
             if (!restricted) {
-                throw violation(fileName, r, "Правило 2", where + ": должен быть задан xs:totalDigits либо пара "
+                throw violation(fileName, where + ": должен быть задан xs:totalDigits либо пара "
                         + "xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive");
             }
         }
@@ -234,58 +233,17 @@ public class XsdSchemaValidator {
         return "";
     }
 
-    private static XsdValidationException violation(String fileName, Element e, String rule, String message) {
-        Object line = e.getUserData(LINE_KEY);
-        String location = line instanceof Integer l ? fileName + ":" + l : fileName;
-        return new XsdValidationException(MessageFormat.format("{0} [{1}]: {2}", rule, location, message));
+    private static XsdValidationException violation(String fileName, String message) {
+        return new XsdValidationException("[" + fileName + "]: " + message);
     }
 
-    /** Строит DOM через SAX, сохраняя номер строки каждого элемента в userData. */
-    private static Document parseWithLineNumbers(String fileName, byte[] content) {
+    private static Document parse(String fileName, byte[] content) {
         try {
-            SAXParserFactory spf = SAXParserFactory.newInstance();
-            spf.setNamespaceAware(true);
-            spf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            spf.setFeature("http://xml.org/sax/features/namespace-prefixes", true); // нужны xmlns-атрибуты
-            spf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-            SAXParser parser = spf.newSAXParser();
-
             DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
             dbf.setNamespaceAware(true);
-            Document doc = dbf.newDocumentBuilder().newDocument();
-
-            parser.parse(new ByteArrayInputStream(content), new DefaultHandler() {
-                private final Deque<Element> stack = new ArrayDeque<>();
-                private Locator locator;
-
-                @Override
-                public void setDocumentLocator(Locator locator) {
-                    this.locator = locator;
-                }
-
-                @Override
-                public void startElement(String uri, String localName, String qName, Attributes attrs) {
-                    Element el = doc.createElementNS(uri.isEmpty() ? null : uri, qName);
-                    for (int i = 0; i < attrs.getLength(); i++) {
-                        String aq = attrs.getQName(i);
-                        String ns = (aq.equals("xmlns") || aq.startsWith("xmlns:"))
-                                ? XMLConstants.XMLNS_ATTRIBUTE_NS_URI
-                                : (attrs.getURI(i).isEmpty() ? null : attrs.getURI(i));
-                        el.setAttributeNS(ns, aq, attrs.getValue(i));
-                    }
-                    if (locator != null) {
-                        el.setUserData(LINE_KEY, locator.getLineNumber(), null);
-                    }
-                    (stack.isEmpty() ? doc : stack.peek()).appendChild(el);
-                    stack.push(el);
-                }
-
-                @Override
-                public void endElement(String uri, String localName, String qName) {
-                    stack.pop();
-                }
-            });
-            return doc;
+            dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            return dbf.newDocumentBuilder().parse(new ByteArrayInputStream(content));
         } catch (ParserConfigurationException | SAXException | IOException e) {
             // Схема уже скомпилировалась, так что сюда попадать не должны
             throw new IllegalStateException("Failed to parse XSD file: " + fileName, e);
