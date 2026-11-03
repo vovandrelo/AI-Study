@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 3. Запрещены xs:any, xs:anyType и xs:anySimpleType, в том числе неявные:
+  элемент без типа получает xs:anyType, атрибут без типа получает xs:anySimpleType.
+
+  ЧТО НАРУШЕНО:
+    Элемент raw объявлен с type="xs:anyType".
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    xs:anyType разрешает любой текст, любые вложенные элементы и атрибуты.
+
+  КАК ИСПРАВИТЬ:
+    Указать конкретный тип.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:element name="raw"> type="xs:anyType"
+    использование xs:anyType запрещено
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- НАРУШЕНИЕ: явный xs:anyType -->
+    <xs:element name="raw" type="xs:anyType"/>
+
+</xs:schema>

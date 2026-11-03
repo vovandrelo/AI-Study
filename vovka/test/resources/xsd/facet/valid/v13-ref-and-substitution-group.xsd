@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ДОПУСТИМЫЙ ВАРИАНТ. ПРАВИЛО 3. Запрещены xs:any, xs:anyType и xs:anySimpleType, в том числе неявные:
+  элемент без типа получает xs:anyType, атрибут без типа получает xs:anySimpleType.
+
+  ЧТО ПРОВЕРЯЕМ:
+    Элемент и атрибут подключаются через ref; элемент группы замены объявлен без type.
+
+  ПОЧЕМУ ЭТО НЕ НАРУШЕНИЕ:
+    У ref тип берётся из глобального объявления, оно проверяется отдельно.
+    Элемент с substitutionGroup без type получает тип головы группы, а не xs:anyType.
+
+  ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:
+    Валидация проходит без исключения.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- Вспомогательный тип: строка до 50 символов. Сам правила не нарушает. -->
+    <xs:simpleType name="Name">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:attribute name="lang" type="t:Name"/>
+    <xs:element name="head" type="t:Name"/>
+    <xs:element name="member" substitutionGroup="t:head"/>
+    <xs:element name="wrapper">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element ref="t:head"/>
+            </xs:sequence>
+            <xs:attribute ref="t:lang"/>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

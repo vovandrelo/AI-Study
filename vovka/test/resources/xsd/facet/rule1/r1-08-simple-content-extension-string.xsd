@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 1. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО НАРУШЕНО:
+    Текст элемента note задан через extension от xs:string.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Extension только добавляет атрибуты и не может сузить текст, поэтому текст остаётся
+    неограниченной строкой.
+
+  КАК ИСПРАВИТЬ:
+    extension base="t:Name", где Name уже ограничен.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:extension> base="xs:string" (в <xs:complexType name="Note">)
+    для строкового типа должно быть задано ограничение
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- Вспомогательный тип: строка до 50 символов. Сам правила не нарушает. -->
+    <xs:simpleType name="Name">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Note">
+        <xs:simpleContent>
+            <!-- НАРУШЕНИЕ: extension от неограниченной строки -->
+            <xs:extension base="xs:string">
+                <xs:attribute name="lang" type="t:Name"/>
+            </xs:extension>
+        </xs:simpleContent>
+    </xs:complexType>
+
+</xs:schema>

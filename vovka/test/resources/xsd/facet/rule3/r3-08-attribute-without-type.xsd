@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 3. Запрещены xs:any, xs:anyType и xs:anySimpleType, в том числе неявные:
+  элемент без типа получает xs:anyType, атрибут без типа получает xs:anySimpleType.
+
+  ЧТО НАРУШЕНО:
+    Атрибут flag объявлен без type и без вложенного simpleType.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    По стандарту такой атрибут неявно получает тип xs:anySimpleType.
+
+  КАК ИСПРАВИТЬ:
+    Указать type.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    атрибут 'flag' объявлен без типа и неявно имеет тип xs:anySimpleType
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:element name="item">
+        <xs:complexType>
+            <!-- НАРУШЕНИЕ: атрибут без типа -->
+            <xs:attribute name="flag"/>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>

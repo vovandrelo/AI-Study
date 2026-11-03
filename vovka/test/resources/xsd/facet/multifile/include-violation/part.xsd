@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Включается из main.xsd. То же пространство имён: urn:test:facet -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Amount">
+        <xs:restriction base="xs:decimal">
+            <!-- НАРУШЕНИЕ (правило 2): ограничена только дробная часть -->
+            <xs:fractionDigits value="2"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+</xs:schema>

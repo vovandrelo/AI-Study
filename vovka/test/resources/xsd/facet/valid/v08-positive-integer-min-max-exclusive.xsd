@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ДОПУСТИМЫЙ ВАРИАНТ. ПРАВИЛО 2. Типы xs:decimal, xs:integer, xs:positiveInteger, xs:nonNegativeInteger, xs:negativeInteger,
+  xs:nonPositiveInteger должны быть ограничены xs:totalDigits ЛИБО парой
+  xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive.
+
+  ЧТО ПРОВЕРЯЕМ:
+    Целое ограничено обеими границами, не включительно.
+
+  ПОЧЕМУ ЭТО НЕ НАРУШЕНИЕ:
+    Exclusive-границы засчитываются так же, как inclusive.
+
+  ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:
+    Валидация проходит без исключения.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Percent">
+        <xs:restriction base="xs:positiveInteger">
+            <xs:minExclusive value="1"/>
+            <xs:maxExclusive value="100"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element name="percent" type="t:Percent"/>
+
+</xs:schema>

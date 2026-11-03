@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 2. Типы xs:decimal, xs:integer, xs:positiveInteger, xs:nonNegativeInteger, xs:negativeInteger,
+  xs:nonPositiveInteger должны быть ограничены xs:totalDigits ЛИБО парой
+  xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive.
+
+  ЧТО НАРУШЕНО:
+    Тип Amount сужает xs:decimal, но restriction пустой.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Пустой restriction ничего не сужает.
+
+  КАК ИСПРАВИТЬ:
+    Добавить xs:totalDigits или пару min + max.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:restriction base="xs:decimal"> (в <xs:simpleType name="Amount">)
+    должен быть задан xs:totalDigits либо пара
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Amount">
+        <!-- НАРУШЕНИЕ: restriction без фасетов -->
+        <xs:restriction base="xs:decimal"/>
+    </xs:simpleType>
+
+</xs:schema>

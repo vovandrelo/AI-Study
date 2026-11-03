@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 1. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО НАРУШЕНО:
+    У элемента note анонимный тип: restriction от xs:string только с xs:whiteSpace.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    xs:whiteSpace управляет обработкой пробелов и не ограничивает ни длину, ни содержимое.
+
+  КАК ИСПРАВИТЬ:
+    Добавить xs:maxLength внутрь restriction.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:restriction base="xs:string"> (в <xs:element name="note">)
+    не задан ни один из параметров xs:length, xs:maxLength, xs:enumeration, xs:pattern
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:element name="note">
+        <xs:simpleType>
+            <xs:restriction base="xs:string">
+                <!-- НАРУШЕНИЕ: whiteSpace не ограничивает значение -->
+                <xs:whiteSpace value="collapse"/>
+            </xs:restriction>
+        </xs:simpleType>
+    </xs:element>
+
+</xs:schema>

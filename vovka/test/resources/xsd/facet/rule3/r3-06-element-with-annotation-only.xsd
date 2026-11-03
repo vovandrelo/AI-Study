@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 3. Запрещены xs:any, xs:anyType и xs:anySimpleType, в том числе неявные:
+  элемент без типа получает xs:anyType, атрибут без типа получает xs:anySimpleType.
+
+  ЧТО НАРУШЕНО:
+    У элемента described есть только документация (xs:annotation), типа нет.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    xs:annotation не задаёт тип, поэтому элемент всё равно получает неявный xs:anyType.
+
+  КАК ИСПРАВИТЬ:
+    Добавить type рядом с документацией.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    элемент 'described' объявлен без типа и неявно имеет тип xs:anyType
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- НАРУШЕНИЕ: документация есть, типа нет -->
+    <xs:element name="described">
+        <xs:annotation>
+            <xs:documentation>Описание элемента</xs:documentation>
+        </xs:annotation>
+    </xs:element>
+
+</xs:schema>

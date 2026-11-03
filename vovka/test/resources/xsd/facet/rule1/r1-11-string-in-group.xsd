@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ПРАВИЛО 1. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО НАРУШЕНО:
+    В именованной группе Contact элемент email объявлен с type="xs:string". Группа нигде не используется.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Проверяются все объявления в файле, даже неиспользуемые: группу могут подключить позже.
+
+  КАК ИСПРАВИТЬ:
+    type="t:Name" с ограниченным типом.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:element name="email"> type="xs:string"
+    для строкового типа должно быть задано ограничение
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:group name="Contact">
+        <xs:sequence>
+            <!-- НАРУШЕНИЕ: неограниченная строка в группе -->
+            <xs:element name="email" type="xs:string"/>
+        </xs:sequence>
+    </xs:group>
+
+</xs:schema>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ДОПУСТИМЫЙ ВАРИАНТ. ПРАВИЛО 2. Типы xs:decimal, xs:integer, xs:positiveInteger, xs:nonNegativeInteger, xs:negativeInteger,
+  xs:nonPositiveInteger должны быть ограничены xs:totalDigits ЛИБО парой
+  xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive.
+
+  ЧТО ПРОВЕРЯЕМ:
+    Два оставшихся числовых типа ограничены через xs:totalDigits.
+
+  ПОЧЕМУ ЭТО НЕ НАРУШЕНИЕ:
+    xs:totalDigits подходит для всего decimal-семейства.
+
+  ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:
+    Валидация проходит без исключения.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Debt">
+        <xs:restriction base="xs:negativeInteger">
+            <xs:totalDigits value="9"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Counter">
+        <xs:restriction base="xs:nonNegativeInteger">
+            <xs:totalDigits value="9"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:element name="debt" type="t:Debt"/>
+    <xs:element name="counter" type="t:Counter"/>
+
+</xs:schema>
