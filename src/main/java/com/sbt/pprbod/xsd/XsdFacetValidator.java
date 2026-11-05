@@ -16,7 +16,25 @@ import java.util.Set;
 
 /**
  * Вторая (кастомная) валидация XSD-схемы: проверка фасетов и запрещённых конструкций.
- * (javadoc класса без изменений)
+ *
+ * <p>Принимает {@link XsdSchema} — результат {@link XsdSchemaCreator}, то есть схему, уже прошедшую
+ * стандартную валидацию, и содержимое всех её файлов. Каждый файл (основной и подключаемые)
+ * проверяется на правила:
+ * <ul>
+ *   <li>xs:string ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern;</li>
+ *   <li>xs:decimal, xs:integer, xs:negativeInteger, xs:nonNegativeInteger, xs:nonPositiveInteger,
+ *       xs:positiveInteger ограничены xs:totalDigits или парой
+ *       xs:minInclusive/xs:minExclusive + xs:maxInclusive/xs:maxExclusive;</li>
+ *   <li>нет xs:any, xs:anyType, xs:anySimpleType (в том числе неявных: элемент без типа
+ *       получает xs:anyType, атрибут без типа — xs:anySimpleType).</li>
+ * </ul>
+ * На первом нарушении бросается {@link XsdValidationException}; тексты ошибок — в {@link XsdExpGenerator}.
+ *
+ * <p>Ограничения задаются только через xs:restriction: прямая ссылка на xs:string или числовой тип
+ * (type, xs:extension base, xs:list itemType, xs:union memberTypes) — всегда нарушение.
+ * Restriction от пользовательского типа не проверяется: его базовый тип проверяется отдельно.
+ *
+ * <p>Класс без состояния, потокобезопасен.
  */
 public class XsdFacetValidator {
 
@@ -40,10 +58,17 @@ public class XsdFacetValidator {
     private static final Set<String> MAX_FACETS = Set.of("maxInclusive", "maxExclusive");
 
     /**
-     * Проверяет все файлы схемы.
+     * Проверяет все файлы схемы: основной и подключённые через xs:import / xs:include.
+     *
+     * <ul>
+     *   <li>файлы берутся из {@link XsdSchema#files()} — их собрали резолверы при создании схемы;</li>
+     *   <li>файлы проверяются по очереди, в том порядке, в каком их загрузили: основной — первым;</li>
+     *   <li>проверка останавливается на первом нарушении — остальные файлы уже не проверяются.</li>
+     * </ul>
      *
      * @param xsdSchema схема и содержимое её файлов, созданные {@link XsdSchemaCreator}
      * @throws XsdValidationException при первом найденном нарушении
+     * @throws NullPointerException   если xsdSchema равна null
      */
     public void validate(XsdSchema xsdSchema) {
         Objects.requireNonNull(xsdSchema, "xsdSchema");
@@ -52,7 +77,25 @@ public class XsdFacetValidator {
 
     // ------------------------------------------------------------------ обход файла
 
-    /** Обходит все теги XML Schema в файле и проверяет те, что касаются правил. */
+    /**
+     * Проверяет один файл схемы: обходит все его теги XML Schema и отправляет каждый на нужную проверку.
+     *
+     * <ul>
+     *   <li>xs:element, xs:attribute — {@link #checkElementOrAttribute};</li>
+     *   <li>xs:restriction — {@link #checkRestriction};</li>
+     *   <li>xs:extension — тип из {@code base="..."} через {@link #checkTypeReference};</li>
+     *   <li>xs:list — тип из {@code itemType="..."} через {@link #checkTypeReference};</li>
+     *   <li>xs:union — {@link #checkUnion};</li>
+     *   <li>xs:any — сразу нарушение: на его месте в XML может стоять любой элемент;</li>
+     *   <li>остальные теги (xs:sequence, xs:annotation, фасеты и т. д.) — не проверяются.</li>
+     * </ul>
+     *
+     * <p>Теги обходятся в порядке документа, вложенные тоже, поэтому вложенные типы
+     * проверяются там же, где встречаются.
+     *
+     * @param fileName    имя файла — попадает в текст ошибки
+     * @param fileContent содержимое файла
+     */
     private void validateFile(String fileName, byte[] fileContent) {
         Document document = parseDocument(fileName, fileContent);
         NodeList xsdTags = document.getElementsByTagNameNS(XSD_NAMESPACE, "*");
@@ -73,7 +116,23 @@ public class XsdFacetValidator {
 
     // ------------------------------------------------------------------ правила
 
-    /** xs:element / xs:attribute: явный type или неявный xs:anyType / xs:anySimpleType (если типа нет). */
+    /**
+     * Проверяет тип, с которым объявлен элемент или атрибут.
+     *
+     * <ul>
+     *   <li>{@code ref="..."} — не проверяется: это ссылка на глобальное объявление,
+     *       его тип проверяется там, где оно объявлено;</li>
+     *   <li>{@code type="..."} — тип проверяется через {@link #checkTypeReference};</li>
+     *   <li>вложенный xs:simpleType / xs:complexType — не проверяется здесь: обход файла
+     *       сам дойдёт до его xs:restriction / xs:extension;</li>
+     *   <li>элемент с {@code substitutionGroup="..."} без типа — не нарушение:
+     *       он получает тип головного элемента группы;</li>
+     *   <li>во всех остальных случаях типа нет совсем — нарушение: элемент неявно получает
+     *       xs:anyType, атрибут — xs:anySimpleType.</li>
+     * </ul>
+     *
+     * @param declaration тег xs:element или xs:attribute
+     */
     private void checkElementOrAttribute(String fileName, Element declaration) {
         if (declaration.hasAttribute("ref")) {
             return; // тип задан у глобального объявления, оно проверяется отдельно
@@ -92,8 +151,15 @@ public class XsdFacetValidator {
     }
 
     /**
-     * xs:union memberTypes="...": каждый тип из списка проверяется как прямая ссылка.
-     * Ветки, объявленные вложенными xs:simpleType, проверятся, когда обход дойдёт до их restriction.
+     * Проверяет типы, из которых составлен xs:union.
+     *
+     * <p>Типы перечисляются через пробел в атрибуте {@code memberTypes="xs:date tns:Code"}.
+     * Каждый из них — прямая ссылка на тип, поэтому проверяется через {@link #checkTypeReference}.
+     *
+     * <p>Типы, объявленные внутри union вложенными xs:simpleType, здесь не проверяются:
+     * обход файла сам дойдёт до их xs:restriction. Если memberTypes нет, проверять нечего.
+     *
+     * @param union тег xs:union
      */
     private void checkUnion(String fileName, Element union) {
         String memberTypes = union.getAttribute("memberTypes").trim();
@@ -106,8 +172,19 @@ public class XsdFacetValidator {
     }
 
     /**
-     * Прямая ссылка на встроенный тип (type, xs:extension base, xs:list itemType, xs:union memberTypes).
-     * К ней нельзя добавить ограничения, поэтому строковые и числовые типы здесь — всегда нарушение.
+     * Проверяет прямую ссылку на тип: {@code type="..."}, {@code xs:extension base="..."},
+     * {@code xs:list itemType="..."}, {@code xs:union memberTypes="..."}.
+     *
+     * <p>К прямой ссылке нельзя добавить фасеты — для этого нужен отдельный тип с xs:restriction.
+     * Поэтому:
+     * <ul>
+     *   <li>xs:anyType, xs:anySimpleType — нарушение: тип разрешает любое содержимое;</li>
+     *   <li>xs:string — нарушение: строка остаётся без ограничений;</li>
+     *   <li>числовой тип ({@link #NUMERIC_TYPES}) — нарушение: число остаётся без ограничений;</li>
+     *   <li>остальные встроенные типы (xs:date, xs:boolean, xs:int и т. д.) — не нарушение;</li>
+     *   <li>пользовательский тип ({@code tns:Code}) — не проверяется здесь: он проверяется
+     *       там, где объявлен.</li>
+     * </ul>
      *
      * @param tag           тег, в котором стоит ссылка
      * @param attributeName атрибут со ссылкой: type, base, itemType, memberTypes
@@ -132,7 +209,23 @@ public class XsdFacetValidator {
         }
     }
 
-    /** xs:restriction base="...": проверка наличия нужных фасетов. */
+    /**
+     * Проверяет, что xs:restriction от встроенного типа задаёт нужные ограничения (фасеты).
+     *
+     * <ul>
+     *   <li>{@code base="xs:string"} — нужен хотя бы один из xs:length, xs:maxLength,
+     *       xs:enumeration, xs:pattern;</li>
+     *   <li>{@code base} — числовой тип ({@link #NUMERIC_TYPES}) — нужен xs:totalDigits
+     *       или обе границы: xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive;</li>
+     *   <li>{@code base="xs:anyType"} или {@code "xs:anySimpleType"} — нарушение. Исключение:
+     *       xs:restriction base="xs:anyType" внутри xs:complexContent — это полная запись
+     *       обычного xs:complexType, любое содержимое она не разрешает;</li>
+     *   <li>{@code base} — пользовательский тип или base нет (вложенный xs:simpleType) —
+     *       не проверяется: базовый тип проверяется там, где объявлен.</li>
+     * </ul>
+     *
+     * @param restriction тег xs:restriction
+     */
     private void checkRestriction(String fileName, Element restriction) {
         String baseType = restriction.getAttribute("base");
         String builtInTypeName = getBuiltInTypeName(restriction, baseType);
@@ -167,9 +260,22 @@ public class XsdFacetValidator {
     // ------------------------------------------------------------------ helpers
 
     /**
-     * Если typeReference ссылается на тип из пространства имён XML Schema — возвращает его имя
-     * без префикса ("xs:string" → "string"), иначе null. Префикс разрешается по объявлениям xmlns
-     * в теге и его родителях, поэтому работают и "xs:", и "xsd:", и пространство имён по умолчанию.
+     * Определяет, ссылается ли имя типа на встроенный тип XML Schema, и возвращает его имя без префикса.
+     *
+     * <ul>
+     *   <li>{@code "xs:string"} — префикс xs объявлен как пространство XML Schema — вернёт "string";</li>
+     *   <li>{@code "xsd:string"} — то же самое с другим префиксом — вернёт "string";</li>
+     *   <li>{@code "string"} без префикса — вернёт "string", если XML Schema объявлена
+     *       пространством имён по умолчанию ({@code xmlns="http://www.w3.org/2001/XMLSchema"});</li>
+     *   <li>{@code "tns:Code"} — префикс указывает на другое пространство имён — вернёт null;</li>
+     *   <li>пустая строка или null (атрибута нет) — вернёт null.</li>
+     * </ul>
+     *
+     * <p>Префикс сверяется не по написанию, а по объявлениям xmlns в самом теге и его родителях.
+     *
+     * @param tag           тег, в котором стоит ссылка — по нему ищутся объявления xmlns
+     * @param typeReference имя типа, как оно записано в схеме
+     * @return имя встроенного типа без префикса или null, если тип не встроенный
      */
     private static String getBuiltInTypeName(Element tag, String typeReference) {
         if (typeReference == null || typeReference.isBlank()) {
@@ -182,7 +288,19 @@ public class XsdFacetValidator {
         return XSD_NAMESPACE.equals(tag.lookupNamespaceURI(prefix)) ? typeName : null;
     }
 
-    /** Есть ли у restriction хотя бы один дочерний тег-фасет из списка. */
+    /**
+     * Проверяет, есть ли у xs:restriction хотя бы один фасет из списка.
+     *
+     * <ul>
+     *   <li>смотрятся только прямые дочерние теги restriction — вложенные глубже не считаются;</li>
+     *   <li>тег считается фасетом, только если он из пространства имён XML Schema;</li>
+     *   <li>значение фасета не проверяется: {@code <xs:maxLength value="0"/>} тоже считается.</li>
+     * </ul>
+     *
+     * @param restriction тег xs:restriction
+     * @param facetNames  имена фасетов без префикса: "maxLength", "pattern" и т. д.
+     * @return true, если найден хотя бы один фасет из списка
+     */
     private static boolean hasAnyFacet(Element restriction, Set<String> facetNames) {
         for (Node child = restriction.getFirstChild(); child != null; child = child.getNextSibling()) {
             if (child instanceof Element facet
@@ -194,7 +312,18 @@ public class XsdFacetValidator {
         return false;
     }
 
-    /** Первый прямой дочерний тег XML Schema с заданным именем или null. */
+    /**
+     * Ищет первый прямой дочерний тег XML Schema с заданным именем.
+     *
+     * <ul>
+     *   <li>смотрятся только прямые дочерние теги — вложенные глубже не ищутся;</li>
+     *   <li>текст, комментарии и теги из других пространств имён пропускаются.</li>
+     * </ul>
+     *
+     * @param parent  тег, в котором ищем
+     * @param tagName имя тега без префикса: "simpleType", "complexType"
+     * @return найденный тег или null, если такого нет
+     */
     private static Element findXsdChild(Element parent, String tagName) {
         for (Node child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
             if (child instanceof Element childTag
@@ -206,6 +335,24 @@ public class XsdFacetValidator {
         return null;
     }
 
+    /**
+     * Разбирает содержимое файла схемы в DOM-документ.
+     *
+     * <ul>
+     *   <li>{@code setNamespaceAware(true)} — без этого у тегов нет пространства имён
+     *       и поиск тегов XML Schema ничего не найдёт;</li>
+     *   <li>{@code FEATURE_SECURE_PROCESSING} — ограничения парсера против вредоносного XML;</li>
+     *   <li>{@code load-external-dtd = false} — не загружать внешний DTD, если он указан в файле.</li>
+     * </ul>
+     *
+     * <p>Файл уже прошёл первый этап, то есть это корректный XML. Ошибка разбора здесь означает
+     * ошибку программы, а не нарушение правил, поэтому бросается IllegalStateException.
+     *
+     * @param fileName    имя файла — попадает в текст ошибки
+     * @param fileContent содержимое файла
+     * @return разобранный документ
+     * @throws IllegalStateException если файл не удалось разобрать
+     */
     private static Document parseDocument(String fileName, byte[] fileContent) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
