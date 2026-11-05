@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ОГРАНИЧЕНИЕ СТРОК. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО НАРУШЕНО:
+    Список Tags состоит из элементов типа xs:string.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Каждый элемент списка может быть строкой любой длины.
+
+  КАК ИСПРАВИТЬ:
+    itemType="t:Name" с ограниченным типом.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:list> itemType="xs:string" (в <xs:simpleType name="Tags">)
+    строковый тип не ограничен
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Tags">
+        <!-- НАРУШЕНИЕ: элементы списка не ограничены -->
+        <xs:list itemType="xs:string"/>
+    </xs:simpleType>
+
+</xs:schema>

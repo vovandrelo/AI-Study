@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ДОПУСТИМЫЙ ВАРИАНТ. ОГРАНИЧЕНИЕ СТРОК И ЧИСЕЛ.
+
+  ЧТО ПРОВЕРЯЕМ:
+    Список и объединение собраны из ограниченных типов и xs:date.
+
+  ПОЧЕМУ ЭТО НЕ НАРУШЕНИЕ:
+    Каждый элемент списка и каждая ветвь объединения ограничены; xs:date в правила не входит.
+
+  ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:
+    Валидация проходит без исключения.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- Вспомогательный тип: строка до 50 символов. Сам правила не нарушает. -->
+    <xs:simpleType name="Name">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:simpleType name="Names">
+        <xs:list itemType="t:Name"/>
+    </xs:simpleType>
+    <xs:simpleType name="DateOrName">
+        <xs:union memberTypes="xs:date t:Name"/>
+    </xs:simpleType>
+    <xs:element name="names" type="t:Names"/>
+    <xs:element name="when" type="t:DateOrName"/>
+
+</xs:schema>

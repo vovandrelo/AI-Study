@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ОГРАНИЧЕНИЕ ЧИСЕЛ. Типы xs:decimal, xs:integer, xs:positiveInteger, xs:nonNegativeInteger, xs:negativeInteger,
+  xs:nonPositiveInteger должны быть ограничены xs:totalDigits ЛИБО парой
+  xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive.
+
+  ЧТО НАРУШЕНО:
+    Текст элемента price задан через extension от xs:decimal.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Extension не сужает текст: сумма остаётся неограниченным числом.
+
+  КАК ИСПРАВИТЬ:
+    extension base="t:Amount", где Amount ограничен xs:totalDigits.
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:extension> base="xs:decimal" (в <xs:complexType name="Money">)
+    числовой тип не ограничен
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- Вспомогательный тип: строка до 50 символов. Сам правила не нарушает. -->
+    <xs:simpleType name="Name">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+    <xs:complexType name="Money">
+        <xs:simpleContent>
+            <!-- НАРУШЕНИЕ: extension от неограниченного числа -->
+            <xs:extension base="xs:decimal">
+                <xs:attribute name="currency" type="t:Name"/>
+            </xs:extension>
+        </xs:simpleContent>
+    </xs:complexType>
+
+</xs:schema>

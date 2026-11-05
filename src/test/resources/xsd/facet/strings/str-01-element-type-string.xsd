@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ОГРАНИЧЕНИЕ СТРОК. Строковый тип (xs:string) должен быть ограничен xs:length, xs:maxLength, xs:enumeration или xs:pattern.
+
+  ЧТО НАРУШЕНО:
+    Элемент name объявлен с type="xs:string".
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Ссылка на встроенный тип по имени: к ней нельзя добавить фасеты, строка остаётся
+    любой длины.
+
+  КАК ИСПРАВИТЬ:
+    Объявить свой simpleType с restriction и xs:maxLength и указать type="t:Name".
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:element name="name"> type="xs:string"
+    строковый тип не ограничен
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <!-- НАРУШЕНИЕ: type="xs:string" без ограничений -->
+    <xs:element name="name" type="xs:string"/>
+
+</xs:schema>

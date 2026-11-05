@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Часть схемы заказа: то же пространство имён, что у order.xsd -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:o="urn:shop:order"
+           targetNamespace="urn:shop:order"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Text100">
+        <xs:restriction base="xs:string">
+            <xs:maxLength value="100"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="Zip">
+        <xs:restriction base="xs:string">
+            <xs:length value="6"/>
+            <xs:pattern value="[0-9]+"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="Address">
+        <xs:sequence>
+            <xs:element name="zip"    type="o:Zip"/>
+            <xs:element name="city"   type="o:Text100"/>
+            <xs:element name="street" type="o:Text100"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="DeliveryAddress">
+        <xs:complexContent>
+            <xs:extension base="o:Address">
+                <xs:sequence>
+                    <xs:element name="entrance" type="o:Text100" minOccurs="0"/>
+                </xs:sequence>
+            </xs:extension>
+        </xs:complexContent>
+    </xs:complexType>
+
+</xs:schema>

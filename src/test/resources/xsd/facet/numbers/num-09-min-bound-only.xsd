@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ОГРАНИЧЕНИЕ ЧИСЕЛ. Типы xs:decimal, xs:integer, xs:positiveInteger, xs:nonNegativeInteger, xs:negativeInteger,
+  xs:nonPositiveInteger должны быть ограничены xs:totalDigits ЛИБО парой
+  xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive.
+
+  ЧТО НАРУШЕНО:
+    Тип Quantity ограничен только xs:minInclusive.
+
+  ПОЧЕМУ ЭТО НАРУШЕНИЕ:
+    Есть нижняя граница, но нет верхней: число может быть сколь угодно большим.
+
+  КАК ИСПРАВИТЬ:
+    Добавить xs:maxInclusive или xs:maxExclusive (или заменить на xs:totalDigits).
+
+  ОЖИДАЕМОЕ СООБЩЕНИЕ (фрагменты):
+    <xs:restriction> base="xs:integer" (в <xs:simpleType name="Quantity">)
+    числовой тип не ограничен
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:test:facet"
+           targetNamespace="urn:test:facet"
+           elementFormDefault="qualified">
+
+    <xs:simpleType name="Quantity">
+        <xs:restriction base="xs:integer">
+            <!-- НАРУШЕНИЕ: нет верхней границы -->
+            <xs:minInclusive value="1"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+</xs:schema>
