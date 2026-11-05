@@ -91,7 +91,7 @@ public class XsdFacetValidator {
                     }
                 }
                 // Запрещённая конструкция: xs:any
-                case "any" -> throw XsdExpGenerator.forbiddenAny(fileName, e);
+                case "any" -> throw XsdExpGenerator.createForbiddenAnyException(fileName, e);
                 default -> { /* остальные теги не проверяются */ }
             }
         }
@@ -108,13 +108,13 @@ public class XsdFacetValidator {
             checkTypeRef(fileName, e, "type", e.getAttribute("type"));
             return;
         }
-        if (firstXsChild(e, "simpleType") != null || firstXsChild(e, "complexType") != null) {
+        if (findFirstXsChild(e, "simpleType") != null || findFirstXsChild(e, "complexType") != null) {
             return; // вложенный тип проверится, когда обход дойдёт до его restriction/extension
         }
         if ("element".equals(e.getLocalName()) && e.hasAttribute("substitutionGroup")) {
             return; // тип наследуется от головы группы подстановки
         }
-        throw XsdExpGenerator.implicitType(fileName, e);
+        throw XsdExpGenerator.createImplicitTypeException(fileName, e);
     }
 
     /**
@@ -122,28 +122,28 @@ public class XsdFacetValidator {
      * К ней нельзя добавить ограничения, поэтому строковые и числовые типы здесь — всегда нарушение.
      */
     private void checkTypeRef(String fileName, Element e, String attrName, String qName) {
-        String builtIn = builtInTypeName(e, qName);
+        String builtIn = getBuiltInTypeName(e, qName);
         if (builtIn == null) {
             return;
         }
         // Запрещённые типы
         if (FORBIDDEN_TYPES.contains(builtIn)) {
-            throw XsdExpGenerator.forbiddenType(fileName, e, attrName, qName);
+            throw XsdExpGenerator.createForbiddenTypeException(fileName, e, attrName, qName);
         }
         // Строки
         if (STRING_TYPES.contains(builtIn)) {
-            throw XsdExpGenerator.unrestrictedString(fileName, e, attrName, qName);
+            throw XsdExpGenerator.createUnrestrictedStringException(fileName, e, attrName, qName);
         }
         // Числа
         if (NUMERIC_TYPES.contains(builtIn)) {
-            throw XsdExpGenerator.unrestrictedNumber(fileName, e, attrName, qName);
+            throw XsdExpGenerator.createUnrestrictedNumberException(fileName, e, attrName, qName);
         }
     }
 
     /** xs:restriction base="...": проверка наличия нужных фасетов. */
     private void checkRestriction(String fileName, Element r) {
         String base = r.getAttribute("base");
-        String builtIn = builtInTypeName(r, base);
+        String builtIn = getBuiltInTypeName(r, base);
         if (builtIn == null) {
             return; // пользовательский базовый тип или вложенный simpleType — проверяются отдельно
         }
@@ -154,19 +154,19 @@ public class XsdFacetValidator {
             boolean explicitComplexType = "anyType".equals(builtIn)
                     && r.getParentNode() instanceof Element p && "complexContent".equals(p.getLocalName());
             if (!explicitComplexType) {
-                throw XsdExpGenerator.forbiddenType(fileName, r, "base", base);
+                throw XsdExpGenerator.createForbiddenTypeException(fileName, r, "base", base);
             }
         // Строки
         } else if (STRING_TYPES.contains(builtIn)) {
             if (!hasAnyFacet(r, STRING_FACETS)) {
-                throw XsdExpGenerator.unrestrictedString(fileName, r, "base", base);
+                throw XsdExpGenerator.createUnrestrictedStringException(fileName, r, "base", base);
             }
         // Числа
         } else if (NUMERIC_TYPES.contains(builtIn)) {
             boolean restricted = hasAnyFacet(r, DIGITS_FACETS)
                     || (hasAnyFacet(r, MIN_FACETS) && hasAnyFacet(r, MAX_FACETS));
             if (!restricted) {
-                throw XsdExpGenerator.unrestrictedNumber(fileName, r, "base", base);
+                throw XsdExpGenerator.createUnrestrictedNumberException(fileName, r, "base", base);
             }
         }
     }
@@ -178,7 +178,7 @@ public class XsdFacetValidator {
      * ("string"), иначе null. Префикс разрешается по объявлениям xmlns, поэтому работают
      * и "xs:", и "xsd:", и пространство имён по умолчанию.
      */
-    private static String builtInTypeName(Element context, String qName) {
+    private static String getBuiltInTypeName(Element context, String qName) {
         if (qName == null || qName.isBlank()) {
             return null;
         }
@@ -198,7 +198,7 @@ public class XsdFacetValidator {
         return false;
     }
 
-    private static Element firstXsChild(Element parent, String localName) {
+    private static Element findFirstXsChild(Element parent, String localName) {
         for (Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
             if (n instanceof Element c && XS.equals(c.getNamespaceURI()) && localName.equals(c.getLocalName())) {
                 return c;
@@ -216,7 +216,7 @@ public class XsdFacetValidator {
             return dbf.newDocumentBuilder().parse(new ByteArrayInputStream(content));
         } catch (ParserConfigurationException | SAXException | IOException e) {
             // Схема уже скомпилировалась, так что сюда попадать не должны
-            throw XsdExpGenerator.unreadableFile(fileName, e);
+            throw XsdExpGenerator.createUnreadableFileException(fileName, e);
         }
     }
 }

@@ -7,7 +7,7 @@ import org.w3c.dom.Node;
  * Исключения второго этапа валидации XSD: все тексты ошибок {@link XsdFacetValidator} в одном месте.
  *
  * <p>Каждый метод отвечает за один вид нарушения и возвращает готовое исключение — вызывающий код
- * пишет {@code throw XsdExpGenerator.unrestrictedString(...)}. Так компилятор видит, что после вызова
+ * пишет {@code throw XsdExpGenerator.createUnrestrictedStringException(...)}. Так компилятор видит, что после вызова
  * выполнение не продолжается.
  *
  * <p>Формат сообщения: {@code [файл]: <место>: <проблема>}. Место строится по тегу схемы:
@@ -30,8 +30,8 @@ public final class XsdExpGenerator {
      * @param attrName атрибут со ссылкой на тип: type, base, itemType, memberTypes
      * @param typeName значение атрибута, как оно записано в схеме ("xs:string", "xsd:string")
      */
-    public static XsdValidationException unrestrictedString(String file, Element tag, String attrName, String typeName) {
-        return violation(file, place(tag, attrName, typeName),
+    public static XsdValidationException createUnrestrictedStringException(String file, Element tag, String attrName, String typeName) {
+        return createViolation(file, describePlace(tag, attrName, typeName),
                 "строковый тип не ограничен: нужен xs:length, xs:maxLength, xs:enumeration или xs:pattern"
                         + " внутри xs:restriction");
     }
@@ -44,8 +44,8 @@ public final class XsdExpGenerator {
      * @param attrName атрибут со ссылкой на тип: type, base, itemType, memberTypes
      * @param typeName значение атрибута, как оно записано в схеме ("xs:decimal")
      */
-    public static XsdValidationException unrestrictedNumber(String file, Element tag, String attrName, String typeName) {
-        return violation(file, place(tag, attrName, typeName),
+    public static XsdValidationException createUnrestrictedNumberException(String file, Element tag, String attrName, String typeName) {
+        return createViolation(file, describePlace(tag, attrName, typeName),
                 "числовой тип не ограничен: нужен xs:totalDigits или пара"
                         + " xs:minInclusive/xs:minExclusive и xs:maxInclusive/xs:maxExclusive внутри xs:restriction");
     }
@@ -57,14 +57,14 @@ public final class XsdExpGenerator {
      * @param attrName атрибут со ссылкой на тип
      * @param typeName значение атрибута, как оно записано в схеме ("xs:anyType")
      */
-    public static XsdValidationException forbiddenType(String file, Element tag, String attrName, String typeName) {
-        return violation(file, place(tag, attrName, typeName),
+    public static XsdValidationException createForbiddenTypeException(String file, Element tag, String attrName, String typeName) {
+        return createViolation(file, describePlace(tag, attrName, typeName),
                 "тип " + typeName + " разрешает любое содержимое, его использование запрещено");
     }
 
     /** Тег xs:any: на этом месте в XML может стоять любой элемент. */
-    public static XsdValidationException forbiddenAny(String file, Element anyTag) {
-        return violation(file, place(anyTag, null, null),
+    public static XsdValidationException createForbiddenAnyException(String file, Element anyTag) {
+        return createViolation(file, describePlace(anyTag, null, null),
                 "xs:any разрешает любой элемент, его использование запрещено");
     }
 
@@ -72,9 +72,9 @@ public final class XsdExpGenerator {
      * Элемент или атрибут объявлен без типа и неявно получил xs:anyType (элемент)
      * или xs:anySimpleType (атрибут).
      */
-    public static XsdValidationException implicitType(String file, Element declaration) {
+    public static XsdValidationException createImplicitTypeException(String file, Element declaration) {
         String implicit = "attribute".equals(declaration.getLocalName()) ? "xs:anySimpleType" : "xs:anyType";
-        return violation(file, place(declaration, null, null),
+        return createViolation(file, describePlace(declaration, null, null),
                 "объявлен без типа и неявно имеет тип " + implicit + ", его использование запрещено; укажите тип");
     }
 
@@ -82,13 +82,13 @@ public final class XsdExpGenerator {
      * Файл схемы не удалось разобрать как XML. После первого этапа такого быть не должно,
      * поэтому это ошибка программы, а не нарушение правил.
      */
-    public static IllegalStateException unreadableFile(String file, Exception cause) {
+    public static IllegalStateException createUnreadableFileException(String file, Exception cause) {
         return new IllegalStateException("Failed to parse XSD file: " + file, cause);
     }
 
     // ------------------------------------------------------------------ формат
 
-    private static XsdValidationException violation(String file, String place, String problem) {
+    private static XsdValidationException createViolation(String file, String place, String problem) {
         return new XsdValidationException("[" + file + "]: " + place + ": " + problem);
     }
 
@@ -96,7 +96,7 @@ public final class XsdExpGenerator {
      * Описание места: {@code <xs:тег name="..."> атрибут="значение"}, а для безымянного тега —
      * ещё ближайший именованный родитель.
      */
-    private static String place(Element tag, String attrName, String value) {
+    private static String describePlace(Element tag, String attrName, String value) {
         StringBuilder sb = new StringBuilder("<xs:").append(tag.getLocalName());
         if (tag.hasAttribute("name")) {
             sb.append(" name=\"").append(tag.getAttribute("name")).append('"');
@@ -106,13 +106,13 @@ public final class XsdExpGenerator {
             sb.append(' ').append(attrName).append("=\"").append(value).append('"');
         }
         if (!tag.hasAttribute("name")) {
-            sb.append(owner(tag));
+            sb.append(describeOwner(tag));
         }
         return sb.toString();
     }
 
     /** Ближайший именованный предок: " (в <xs:simpleType name="Amount">)". */
-    private static String owner(Element tag) {
+    private static String describeOwner(Element tag) {
         for (Node n = tag.getParentNode(); n instanceof Element p; n = p.getParentNode()) {
             if (p.hasAttribute("name")) {
                 return " (в <xs:" + p.getLocalName() + " name=\"" + p.getAttribute("name") + "\">)";

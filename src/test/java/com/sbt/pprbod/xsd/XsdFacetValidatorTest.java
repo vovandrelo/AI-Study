@@ -591,7 +591,7 @@ class XsdFacetValidatorTest {
         void g_01_firstViolationWins() {
             // В файле xs:any, а ниже xs:string; в сообщении должно быть только первое.
             XsdValidationException e = assertThrows(XsdValidationException.class,
-                    () -> VALIDATOR.validate(load("general/g01-first-violation-wins.xsd")));
+                    () -> VALIDATOR.validate(loadSchema("general/g01-first-violation-wins.xsd")));
             assertTrue(e.getMessage().contains("xs:any разрешает любой элемент"), e.getMessage());
             assertFalse(e.getMessage().contains("xs:string"), e.getMessage());
         }
@@ -607,7 +607,7 @@ class XsdFacetValidatorTest {
 
     /** Схема из перечисленных файлов (главный первым) должна пройти валидацию. */
     private static void assertValid(String... files) {
-        XsdSchema schema = load(files);
+        XsdSchema schema = loadSchema(files);
         try {
             VALIDATOR.validate(schema);
         } catch (XsdValidationException e) {
@@ -625,7 +625,7 @@ class XsdFacetValidatorTest {
 
     /** Многофайловая схема должна нарушать правило именно в файле {@code expectedFile}. */
     private static void assertViolationIn(String expectedFile, String[] files, String... fragments) {
-        XsdSchema schema = load(files);
+        XsdSchema schema = loadSchema(files);
         XsdValidationException e = assertThrows(XsdValidationException.class, () -> VALIDATOR.validate(schema),
                 "Ожидалось нарушение в " + expectedFile);
         String message = e.getMessage();
@@ -642,29 +642,29 @@ class XsdFacetValidatorTest {
      * главный файл компилируется SchemaFactory (xs:include / xs:import разрешаются относительно него),
      * содержимое всех перечисленных файлов кладётся в мапу в том же порядке.
      */
-    private static XsdSchema load(String... files) {
+    private static XsdSchema loadSchema(String... files) {
         Map<String, byte[]> content = new LinkedHashMap<>();
         for (String file : files) {
-            content.put(BASE + file, read(resource(file)));
+            content.put(BASE + file, readBytes(getResource(file)));
         }
-        return new XsdSchema(compile(files[0]), content);
+        return new XsdSchema(compileSchema(files[0]), content);
     }
 
-    private static Schema compile(String file) {
+    private static Schema compileSchema(String file) {
         try {
-            return SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI).newSchema(resource(file));
+            return SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI).newSchema(getResource(file));
         } catch (SAXException e) {
             throw new IllegalStateException("Тестовая схема не компилируется (ошибка в самом тесте): " + file, e);
         }
     }
 
-    private static URL resource(String file) {
+    private static URL getResource(String file) {
         URL url = XsdFacetValidatorTest.class.getClassLoader().getResource(BASE + file);
         assertNotNull(url, "Тестовая схема не найдена в classpath: " + BASE + file);
         return url;
     }
 
-    private static byte[] read(URL url) {
+    private static byte[] readBytes(URL url) {
         try (InputStream in = url.openStream()) {
             return in.readAllBytes();
         } catch (IOException e) {
