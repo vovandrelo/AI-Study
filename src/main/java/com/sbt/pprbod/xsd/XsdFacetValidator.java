@@ -82,14 +82,7 @@ public class XsdFacetValidator {
                 case "restriction" -> checkRestriction(fileName, e);
                 case "extension" -> checkTypeRef(fileName, e, "base", e.getAttribute("base"));
                 case "list" -> checkTypeRef(fileName, e, "itemType", e.getAttribute("itemType"));
-                case "union" -> {
-                    String members = e.getAttribute("memberTypes").trim();
-                    if (!members.isEmpty()) {
-                        for (String member : members.split("\\s+")) {
-                            checkTypeRef(fileName, e, "memberTypes", member);
-                        }
-                    }
-                }
+                case "union" -> checkUnion(fileName, e);
                 // Запрещённая конструкция: xs:any
                 case "any" -> throw XsdExpGenerator.createForbiddenAnyException(fileName, e);
                 default -> { /* остальные теги не проверяются */ }
@@ -115,6 +108,20 @@ public class XsdFacetValidator {
             return; // тип наследуется от головы группы подстановки
         }
         throw XsdExpGenerator.createImplicitTypeException(fileName, e);
+    }
+
+    /**
+     * xs:union memberTypes="...": каждый тип из списка проверяется как прямая ссылка.
+     * Ветки, объявленные вложенными xs:simpleType, проверятся, когда обход дойдёт до их restriction.
+     */
+    private void checkUnion(String fileName, Element union) {
+        String members = union.getAttribute("memberTypes").trim();
+        if (members.isEmpty()) {
+            return; // все ветки заданы вложенными xs:simpleType
+        }
+        for (String member : members.split("\\s+")) {
+            checkTypeRef(fileName, union, "memberTypes", member);
+        }
     }
 
     /**
