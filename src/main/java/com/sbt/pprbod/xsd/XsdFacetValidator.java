@@ -142,4 +142,80 @@ public class XsdFacetValidator {
         // Запрещённые типы
         if (FORBIDDEN_TYPES.contains(builtInTypeName)) {
             // <xs:complexContent><xs:restriction base="xs:anyType"> — развёрнутая запись обычного
-            // complexType, произвольного содержимого она не
+            // complexType, произвольного содержимого она не допускает
+            boolean isComplexContentRestriction = "anyType".equals(builtInTypeName)
+                    && restriction.getParentNode() instanceof Element parent
+                    && "complexContent".equals(parent.getLocalName());
+            if (!isComplexContentRestriction) {
+                throw XsdExpGenerator.createForbiddenTypeException(fileName, restriction, "base", baseType);
+            }
+            // Строки
+        } else if (STRING_TYPES.contains(builtInTypeName)) {
+            if (!hasAnyFacet(restriction, STRING_FACETS)) {
+                throw XsdExpGenerator.createUnrestrictedStringException(fileName, restriction, "base", baseType);
+            }
+            // Числа
+        } else if (NUMERIC_TYPES.contains(builtInTypeName)) {
+            boolean isRestricted = hasAnyFacet(restriction, TOTAL_DIGITS_FACETS)
+                    || (hasAnyFacet(restriction, MIN_FACETS) && hasAnyFacet(restriction, MAX_FACETS));
+            if (!isRestricted) {
+                throw XsdExpGenerator.createUnrestrictedNumberException(fileName, restriction, "base", baseType);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    /**
+     * Если typeReference ссылается на тип из пространства имён XML Schema — возвращает его имя
+     * без префикса ("xs:string" → "string"), иначе null. Префикс разрешается по объявлениям xmlns
+     * в теге и его родителях, поэтому работают и "xs:", и "xsd:", и пространство имён по умолчанию.
+     */
+    private static String getBuiltInTypeName(Element tag, String typeReference) {
+        if (typeReference == null || typeReference.isBlank()) {
+            return null;
+        }
+        String reference = typeReference.trim();
+        int colonIndex = reference.indexOf(':');
+        String prefix = colonIndex > 0 ? reference.substring(0, colonIndex) : null;
+        String typeName = colonIndex > 0 ? reference.substring(colonIndex + 1) : reference;
+        return XSD_NAMESPACE.equals(tag.lookupNamespaceURI(prefix)) ? typeName : null;
+    }
+
+    /** Есть ли у restriction хотя бы один дочерний тег-фасет из списка. */
+    private static boolean hasAnyFacet(Element restriction, Set<String> facetNames) {
+        for (Node child = restriction.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child instanceof Element facet
+                    && XSD_NAMESPACE.equals(facet.getNamespaceURI())
+                    && facetNames.contains(facet.getLocalName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Первый прямой дочерний тег XML Schema с заданным именем или null. */
+    private static Element findXsdChild(Element parent, String tagName) {
+        for (Node child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child instanceof Element childTag
+                    && XSD_NAMESPACE.equals(childTag.getNamespaceURI())
+                    && tagName.equals(childTag.getLocalName())) {
+                return childTag;
+            }
+        }
+        return null;
+    }
+
+    private static Document parseDocument(String fileName, byte[] fileContent) {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            return factory.newDocumentBuilder().parse(new ByteArrayInputStream(fileContent));
+        } catch (ParserConfigurationException | SAXException | IOException exception) {
+            // Схема уже скомпилировалась, так что сюда попадать не должны
+            throw XsdExpGenerator.createUnreadableFileException(fileName, exception);
+        }
+    }
+}
